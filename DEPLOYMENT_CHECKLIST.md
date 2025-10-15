@@ -85,8 +85,7 @@ NEXT_PUBLIC_SITE_URL=https://mngrouphome.org
 - [x] **Real-time Collaboration** - Team communication
 
 ### Contact Information
-- **Business Phone**: (952) 594-1288
-- **Home Phone**: (612) 354-3406
+- **Phone**: 952-594-1288
 - **Email**: info@mngrouphome.com
 - **Address**: 6524 Humboldt Ave S, Richfield, MN 55423
 

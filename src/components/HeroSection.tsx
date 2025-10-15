@@ -98,7 +98,7 @@ export default function HeroSection() {
               href="tel:9525941288"
               className="border-2 border-white text-white px-8 py-4 rounded-lg text-fluid-lg font-semibold hover:bg-white hover:text-primary-600 transition-all duration-300 transform hover:scale-105 hover:-translate-y-1"
             >
-              Call (952) 594-1288
+              Call 952-594-1288
             </a>
           </motion.div>
 

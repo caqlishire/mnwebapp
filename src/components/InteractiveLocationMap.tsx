@@ -37,8 +37,8 @@ export default function InteractiveLocationMap({ locations, className = '' }: In
   const mainLocation = {
     name: "MN Group Home LLC Headquarters",
     address: "6524 Humboldt Ave S, Richfield, MN 55423",
-    phone: "(952) 594-1288",
-    homePhone: "(612) 354-3406",
+    phone: "952-594-1288",
+    homePhone: "952-594-1288",
     email: "info@mngrouphome.com",
     coordinates: { lat: 44.8833, lng: -93.2833 }
   };

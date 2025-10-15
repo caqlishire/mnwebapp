@@ -274,8 +274,7 @@ nslookup mngrouphome.org
 5. Monitor performance with Vercel Analytics
 
 ## Contact Information for Site
-- **Business Phone**: (952) 594-1288
-- **Home Phone**: (612) 354-3406
+- **Phone**: 952-594-1288
 - **Email**: info@mngrouphome.com
 - **Address**: 6524 Humboldt Ave S, Richfield, MN 55423
 

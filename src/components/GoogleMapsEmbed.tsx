@@ -20,8 +20,8 @@ export default function GoogleMapsEmbed({
   const businessInfo = {
     name: "MN Group Home LLC",
     address: "6524 Humboldt Ave S, Richfield, MN 55423",
-    phone: "(952) 594-1288",
-    homePhone: "(612) 354-3406",
+    phone: "952-594-1288",
+    homePhone: "952-594-1288",
     hours: "24/7 Support Available",
     email: "info@mngrouphome.com"
   };

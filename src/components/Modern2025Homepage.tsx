@@ -88,12 +88,6 @@ const testimonials = [
 
 const teamMembers = [
   {
-    name: "Dr. Patricia Williams",
-    role: "Clinical Director",
-    image: "/api/placeholder/150/150",
-    specialty: "Behavioral Psychology"
-  },
-  {
     name: "Suhura Abdulahi",
     role: "Program Manager", 
     image: "/api/placeholder/150/150",

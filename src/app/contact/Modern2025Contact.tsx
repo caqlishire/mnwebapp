@@ -31,7 +31,7 @@ const contactMethods = [
   {
     icon: PhoneIcon,
     title: 'Business Phone',
-    value: '(952) 594-1288',
+    value: '952-594-1288',
     href: 'tel:9525941288',
     description: 'Call us directly for immediate assistance',
     availability: '24/7 Emergency Line',
@@ -40,8 +40,8 @@ const contactMethods = [
   {
     icon: PhoneIcon,
     title: 'Home Phone',
-    value: '(612) 354-3406',
-    href: 'tel:6123543406',
+    value: '952-594-1288',
+    href: 'tel:9525941288',
     description: 'Alternative contact number',
     availability: 'Business Hours',
     color: '#059669'
@@ -124,7 +124,7 @@ const commonQuestions = [
 const emergencyInfo = {
   title: 'Emergency Support',
   description: 'We provide 24/7 emergency support for all our residents and their families.',
-  phone: '(952) 594-1288',
+  phone: '952-594-1288',
   procedures: [
     'Call our main number immediately',
     'Identify yourself and the nature of the emergency',
@@ -134,8 +134,8 @@ const emergencyInfo = {
 };
 
 const contactInfo = {
-  mainPhone: '(952) 594-1288',
-  homePhone: '(612) 354-3406',
+  mainPhone: '952-594-1288',
+  homePhone: '952-594-1288',
   email: 'info@mngrouphome.com',
   address: '6524 Humboldt Ave S, Richfield, MN 55423'
 };
@@ -198,16 +198,16 @@ export default function Modern2025Contact() {
                 variant="primary"
                 icon={<PhoneIcon className="w-5 h-5" />}
               >
-                Business (952) 594-1288
+                Call 952-594-1288
               </NeomorphicButton>
               
               <NeomorphicButton
-                href="tel:6123543406"
+                href="tel:9525941288"
                 size="lg"
                 variant="secondary"
                 icon={<PhoneIcon className="w-5 h-5" />}
               >
-                Home (612) 354-3406
+                Call 952-594-1288
               </NeomorphicButton>
               
               <NeomorphicButton

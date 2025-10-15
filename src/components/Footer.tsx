@@ -39,7 +39,7 @@ export default function Footer() {
                 6524 Humboldt Ave S<br />Richfield, MN 55423
               </div>
               <div>
-                <a href="tel:9525941288" className="hover:underline">(952) 594-1288</a>
+                <a href="tel:9525941288" className="hover:underline">952-594-1288</a>
               </div>
               <div>
                 <a href="mailto:mngrouphome@gmail.com" className="hover:underline">mngrouphome@gmail.com</a>

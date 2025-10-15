@@ -520,7 +520,7 @@ export default function Modern2025Services() {
                   variant="secondary"
                   icon={<PhoneIcon className="w-5 h-5" />}
                 >
-                  Call (952) 594-1288
+                  Call 952-594-1288
                 </NeomorphicButton>
               </div>
             </motion.div>

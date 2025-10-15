@@ -29,7 +29,7 @@ import VoiceNavigation from '../../components/advanced/VoiceNavigation';
 const mainLocation = {
   name: 'MN Group Home LLC Headquarters',
   address: '6524 Humboldt Ave S, Richfield, MN 55423',
-  phone: '(952) 594-1288',
+  phone: '952-594-1288',
   email: 'info@mngrouphome.com',
   hours: {
     weekdays: '8:00 AM - 6:00 PM',
@@ -203,7 +203,7 @@ export default function Modern2025Locations() {
                 variant="secondary"
                 icon={<PhoneIcon className="w-6 h-6" />}
               >
-                Call (952) 594-1288
+                Call 952-594-1288
               </NeomorphicButton>
             </motion.div>
           </motion.div>

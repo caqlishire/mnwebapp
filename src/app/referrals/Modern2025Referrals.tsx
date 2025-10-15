@@ -269,7 +269,7 @@ export default function Modern2025Referrals() {
                 variant="secondary"
                 icon={<PhoneIcon className="w-6 h-6" />}
               >
-                Call (952) 594-1288
+                Call 952-594-1288
               </NeomorphicButton>
             </motion.div>
           </motion.div>
@@ -602,7 +602,7 @@ export default function Modern2025Referrals() {
                   variant="secondary"
                   icon={<PhoneIcon className="w-5 h-5" />}
                 >
-                  Call (952) 594-1288
+                  Call 952-594-1288
                 </NeomorphicButton>
               </div>
 

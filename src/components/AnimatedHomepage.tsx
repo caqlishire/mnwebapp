@@ -169,7 +169,7 @@ export default function AnimatedHomepage() {
                   >
                     <p className="text-primary-600 font-medium">Phone:</p>
                     <a href="tel:9525941288" className="text-primary-600 hover:text-primary-700 font-medium transition-colors duration-200">
-                      (952) 594-1288
+                      952-594-1288
                     </a>
                   </motion.div>
                   <motion.div

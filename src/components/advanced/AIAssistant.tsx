@@ -48,7 +48,7 @@ const aiResponses = {
     suggestions: ['Morning availability', 'Afternoon availability', 'This week', 'Next week']
   },
   contact_info: {
-    content: "You can reach us at (952) 594-1288 or email info@mngrouphome.com. Our main office is located at 6524 Humboldt Ave S, Richfield, MN 55423. We're available Monday-Friday 8 AM-6 PM, with 24/7 emergency support.",
+    content: "You can reach us at 952-594-1288 or email info@mngrouphome.com. Our main office is located at 6524 Humboldt Ave S, Richfield, MN 55423. We're available Monday-Friday 8 AM-6 PM, with 24/7 emergency support.",
     suggestions: ['Get directions', 'Emergency contact', 'Email us directly', 'Office hours']
   },
   make_referral: {
@@ -120,7 +120,7 @@ export default function AIAssistant() {
       } else {
         // Default helpful response
         setTimeout(() => {
-          addMessage("Thank you for your question! For the most accurate and detailed information, I recommend calling us at (952) 594-1288 or using one of the quick actions below. Our team is ready to provide personalized assistance.", 'ai', ['Call (952) 594-1288', 'Schedule Tour', 'Make Referral', 'View Services']);
+          addMessage("Thank you for your question! For the most accurate and detailed information, I recommend calling us at 952-594-1288 or using one of the quick actions below. Our team is ready to provide personalized assistance.", 'ai', ['Call 952-594-1288', 'Schedule Tour', 'Make Referral', 'View Services']);
         }, 1000);
       }
       

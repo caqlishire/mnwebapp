@@ -8,8 +8,7 @@ MN Group Home LLC is a premier provider of community residential services, speci
 
 ### 📍 Location
 - **Address**: 6524 Humboldt Ave S, Richfield, MN 55423
-- **Business Phone**: (952) 594-1288
-- **Home Phone**: (612) 354-3406
+- **Phone**: 952-594-1288
 - **Email**: info@mngrouphome.com
 
 ### 👥 Our Team
@@ -172,8 +171,7 @@ This project is proprietary and confidential to MN Group Home LLC.
 ## 📞 Support
 
 For technical support or questions about the website:
-- **Business Phone**: (952) 594-1288
-- **Home Phone**: (612) 354-3406
+- **Phone**: 952-594-1288
 - **Email**: info@mngrouphome.com
 
 ## 🏆 Acknowledgments

@@ -163,7 +163,7 @@ export default function AnimatedGallery() {
                 href="tel:9525941288"
                 className="btn-modern glass-effect border-2 border-white/30 text-white px-8 py-3 rounded-md text-lg font-medium hover:bg-white/10 transition-colors duration-200"
               >
-                Call (952) 594-1288
+                Call 952-594-1288
               </motion.a>
             </div>
           </motion.div>
