@@ -1,0 +1,492 @@
+//@version=6
+// =============================================================================
+//  AUDUSD LIQUIDITY SWEEP - PURE PRICE ACTION
+//  -----------------------------------------------------------------------------
+//  No moving averages, oscillators, bands or any other lagging indicator.
+//  Every rule is read straight off the candles: swing points, highs, lows,
+//  closes and wicks.
+//
+//  IDEA
+//    Stop orders cluster just beyond obvious levels (swing highs/lows, the
+//    previous-day and Asian-session extremes, round numbers). When a candle
+//    pokes through such a level and then CLOSES BACK INSIDE, the break was a
+//    liquidity grab, not acceptance. This script trades the reversal, only in
+//    the direction of the higher-timeframe market structure, and only after a
+//    following candle confirms it.
+//
+//  RULES (closed candles only - signals never repaint)
+//    1 Bias     Higher-timeframe structure: bullish after a close above the last
+//               swing high, bearish after a close below the last swing low.
+//    2 Sweep    A candle wicks beyond a liquidity level by >= N pips, closes back
+//               inside and closes in the far part of its own range (rejection).
+//    3 Confirm  Within a few candles, price closes beyond the sweep candle's
+//               opposite extreme (a small market-structure shift).
+//    4 Stop     Beyond the sweep extreme + buffer.
+//    5 Target   Fixed R multiple, optional break-even.
+//    6 Filters  Session, stop-size window, max trades per day, cooldown.
+//
+//  The dashboard simulates every signal on the candles loaded on YOUR chart
+//  (SL first if SL and TP share a candle, costs deducted) and reports win rate,
+//  profit factor, average R and max drawdown in R.
+//
+//  NOT FINANCIAL ADVICE. No strategy is guaranteed to be profitable and past
+//  results do not predict future results. Verify on your own data and forward
+//  test on a demo account before risking money.
+// =============================================================================
+indicator("AUDUSD Liquidity Sweep - Pure Price Action", shorttitle = "AUD PA Sweep", overlay = true, max_bars_back = 500, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+// -----------------------------------------------------------------------------
+//  INPUTS
+// -----------------------------------------------------------------------------
+G_MODE = "1. Mode"
+G_LIQ  = "2. Liquidity and sweep"
+G_ENT  = "3. Entry and stop"
+G_FLT  = "4. Filters"
+G_CST  = "5. Costs and display"
+G_CUS  = "6. Custom-mode values"
+
+mode = input.string("Scalp", "Trading mode", options = ["Scalp", "Swing", "Custom"], group = G_MODE, tooltip = "Scalp: M5-M15, London/NY session only, 1.5R target, break-even at 1R.\nSwing: M30-H4, any session, 2.5R target, break-even at 1.5R.\nCustom: uses the values in group 6.")
+
+swingLen  = input.int(5, "Swing length (bars each side)", minval = 2, maxval = 30, group = G_LIQ, tooltip = "A swing high/low is the highest high / lowest low of 2*N+1 candles. Larger = fewer but more significant levels.")
+useSwing  = input.bool(true, "Liquidity: swing highs / lows", group = G_LIQ)
+usePDHL   = input.bool(true, "Liquidity: previous day high / low", group = G_LIQ)
+useAsia   = input.bool(true, "Liquidity: Asian session high / low", group = G_LIQ)
+useRound  = input.bool(true, "Liquidity: round numbers", group = G_LIQ)
+roundPips = input.int(50, "Round-number spacing (pips)", minval = 10, maxval = 500, step = 10, group = G_LIQ, tooltip = "50 = every x.xx00 and x.xx50 (0.6500, 0.6550 ...). 100 = big figures only.")
+asiaSess  = input.session("0900-1600", "Asian session (Tokyo time)", group = G_LIQ, tooltip = "0900-1600 Tokyo = 00:00-07:00 UTC.")
+minConf   = input.int(1, "Minimum confluence", minval = 1, maxval = 4, group = G_LIQ, tooltip = "How many different liquidity types the same candle must sweep. 1 = any level. 2 = A+ setups only (far fewer trades).")
+minSweepP = input.float(1.0, "Minimum sweep beyond the level (pips)", minval = 0.0, step = 0.5, group = G_LIQ)
+minReject = input.float(0.6, "Rejection strength", minval = 0.5, maxval = 0.95, step = 0.05, group = G_LIQ, tooltip = "Share of the candle's range between the sweep extreme and the close. 0.6 = after a sweep high the close must sit in the bottom 40% of the candle (top 40% after a sweep low).")
+maxAge    = input.int(200, "Max age of swing levels (bars)", minval = 20, maxval = 1000, group = G_LIQ)
+
+entryMode   = input.string("Confirmed", "Entry mode", options = ["Confirmed", "Immediate"], group = G_ENT, tooltip = "Confirmed: wait up to N candles for a close beyond the sweep candle's opposite extreme.\nImmediate: enter at the close of the sweep candle itself.")
+confirmBars = input.int(3, "Confirmation window (bars)", minval = 1, maxval = 10, group = G_ENT)
+slBuffer    = input.float(1.0, "Stop buffer beyond the sweep (pips)", minval = 0.0, step = 0.5, group = G_ENT)
+flatEOD     = input.bool(true, "Close open trades when the hold-until window ends", group = G_ENT, tooltip = "Only applies while the session filter is active. Avoids holding scalps overnight or over the weekend.")
+
+useBias  = input.bool(true, "Trade only with higher-timeframe structure", group = G_FLT)
+biasTFin = input.string("Auto", "Bias timeframe", options = ["Auto", "15", "30", "60", "120", "240", "D", "W"], group = G_FLT, tooltip = "Auto: M1-M14 -> H1, M15-M59 -> H4, H1-H3 -> D, H4 and above -> W.")
+biasLen  = input.int(3, "Bias swing length", minval = 2, maxval = 10, group = G_FLT)
+entrySess = input.session("0700-1530", "Entry window", group = G_FLT, tooltip = "New trades are only taken inside this window. Default 07:00-15:30 London = London open through New York morning. Ignored on charts of H4 and above.")
+holdSess  = input.session("0700-1700", "Hold-until window", group = G_FLT, tooltip = "With 'close open trades when the session ends' on, a trade still open after this window ends is closed at the market. Default 17:00 London = New York midday.")
+tradeTZ   = input.string("Europe/London", "Session time zone", options = ["Europe/London", "America/New_York", "UTC", "Australia/Sydney", "Asia/Tokyo"], group = G_FLT)
+maxPerDay = input.int(3, "Max trades per day", minval = 1, maxval = 20, group = G_FLT)
+cooldown  = input.int(6, "Minimum bars between trades", minval = 0, maxval = 200, group = G_FLT)
+
+costPips   = input.float(1.0, "Round-trip cost: spread + slippage (pips)", minval = 0.0, step = 0.1, group = G_CST, tooltip = "Deducted from every simulated trade in the dashboard statistics.")
+showLevels = input.bool(true, "Show PDH/PDL, Asian range and swept levels", group = G_CST)
+showTrade  = input.bool(true, "Show stop / target boxes", group = G_CST)
+showSessBg = input.bool(false, "Shade trading and Asian sessions", group = G_CST)
+showDash   = input.bool(true, "Show dashboard", group = G_CST)
+dashPos    = input.string("Top right", "Dashboard position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = G_CST)
+dynAlerts  = input.bool(true, "Send detailed alert() messages", group = G_CST, tooltip = "Create the alert with condition 'Any alert() function call' to receive entry, stop and target levels in the message.")
+bullCol    = input.color(#26a69a, "Buy colour", group = G_CST)
+bearCol    = input.color(#ef5350, "Sell colour", group = G_CST)
+
+cMinStop = input.float(6.0, "Min stop (pips)", minval = 0.5, step = 0.5, group = G_CUS)
+cMaxStop = input.float(25.0, "Max stop (pips)", minval = 1.0, step = 1.0, group = G_CUS)
+cTpR     = input.float(1.5, "Take profit (R multiple)", minval = 0.5, step = 0.25, group = G_CUS)
+cBeR     = input.float(1.0, "Move stop to break-even at (R, 0 = off)", minval = 0.0, step = 0.25, group = G_CUS)
+cSess    = input.bool(true, "Use session filter", group = G_CUS)
+
+float minStopPips = mode == "Scalp" ? 6.0 : mode == "Swing" ? 15.0 : cMinStop
+float maxStopPips = mode == "Scalp" ? 25.0 : mode == "Swing" ? 80.0 : cMaxStop
+float tpR         = mode == "Scalp" ? 1.5 : mode == "Swing" ? 2.5 : cTpR
+float beR         = mode == "Scalp" ? 1.0 : mode == "Swing" ? 1.5 : cBeR
+bool  useSession  = mode == "Scalp" ? true : mode == "Swing" ? false : cSess
+
+// -----------------------------------------------------------------------------
+//  MARKET CONSTANTS, SESSIONS, HIGHER-TIMEFRAME DATA
+// -----------------------------------------------------------------------------
+float pip      = syminfo.mintick < 0.0001 ? syminfo.mintick * 10 : syminfo.mintick
+float minSweep = minSweepP * pip
+float buf      = slBuffer * pip
+float rStep    = roundPips * pip
+int   chartSec = timeframe.in_seconds()
+bool  dailyOK  = chartSec < 86400
+
+bool entryRaw = not na(time(timeframe.period, entrySess, tradeTZ))
+bool holdRaw  = not na(time(timeframe.period, holdSess, tradeTZ))
+bool asiaRaw  = not na(time(timeframe.period, asiaSess, "Asia/Tokyo"))
+bool sessOK   = not useSession or chartSec >= 14400 or entryRaw
+bool holdOK   = not useSession or chartSec >= 14400 or holdRaw
+bool inAsia   = useAsia and chartSec < 14400 and asiaRaw
+bool newDay   = timeframe.change("D")
+
+var float asiaHi     = na
+var float asiaLo     = na
+var float asiaHiPrev = na
+var float asiaLoPrev = na
+if inAsia
+    if not inAsia[1]
+        asiaHi := high
+        asiaLo := low
+        asiaHiPrev := na
+        asiaLoPrev := na
+    else
+        asiaHi := math.max(asiaHi, high)
+        asiaLo := math.min(asiaLo, low)
+else if inAsia[1]
+    asiaHiPrev := asiaHi
+    asiaLoPrev := asiaLo
+
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+// Market-structure trend: +1 after a close above the last swing high, -1 after a close below the last swing low.
+f_structure(int len) =>
+    float sH = ta.pivothigh(high, len, len)
+    float sL = ta.pivotlow(low, len, len)
+    var float lastH = na
+    var float lastL = na
+    var int   state = 0
+    if not na(sH)
+        lastH := sH
+    if not na(sL)
+        lastL := sL
+    if not na(lastH) and close > lastH
+        state := 1
+        lastH := na
+    if not na(lastL) and close < lastL
+        state := -1
+        lastL := na
+    state
+
+string autoTF  = chartSec < 900 ? "60" : chartSec < 3600 ? "240" : chartSec < 14400 ? "D" : "W"
+string biasTF  = biasTFin == "Auto" ? autoTF : biasTFin
+bool   biasHTF = timeframe.in_seconds(biasTF) > chartSec
+int    trendHTF = request.security(syminfo.tickerid, biasTF, f_structure(biasLen)[1], lookahead = barmerge.lookahead_on)
+int    trendLoc = f_structure(biasLen)
+int    trend    = nz(biasHTF ? trendHTF : trendLoc)
+
+float ph = ta.pivothigh(high, swingLen, swingLen)
+float pl = ta.pivotlow(low, swingLen, swingLen)
+
+// -----------------------------------------------------------------------------
+//  STATE
+// -----------------------------------------------------------------------------
+var array<float> shP = array.new<float>()
+var array<int>   shB = array.new<int>()
+var array<float> slP = array.new<float>()
+var array<int>   slB = array.new<int>()
+
+var int    pendDir      = 0
+var float  pendTrig     = na
+var float  pendSL       = na
+var int    pendBar      = 0
+var string pendTxt      = ""
+var int    lastEntryBar = -100000
+var int    tradesToday  = 0
+
+var int   trDir   = 0
+var float trEntry = na
+var float trSL    = na
+var float trTP    = na
+var float trRisk  = na
+var bool  trBE    = false
+var int   trBar   = 0
+var box   trTPBox = na
+var box   trSLBox = na
+
+var int   nTrades = 0
+var int   nWins   = 0
+var int   nLoss   = 0
+var int   nBE     = 0
+var float sumWin  = 0.0
+var float sumLoss = 0.0
+var float cumR    = 0.0
+var float peakR   = 0.0
+var float maxDD   = 0.0
+var int   streak  = 0
+var int   maxStreak = 0
+
+int    sigDir   = 0
+float  sigEntry = na
+float  sigSL    = na
+float  sigTP    = na
+string sigTxt   = ""
+int    exitKind = 99
+float  exitR    = na
+
+// -----------------------------------------------------------------------------
+//  ENGINE - runs once per CLOSED candle
+// -----------------------------------------------------------------------------
+if barstate.isconfirmed
+    if newDay
+        tradesToday := 0
+
+    // ---- simulated trade management (uses this candle's range; the entry candle is skipped) ----
+    if trDir != 0 and bar_index > trBar
+        bool  hitSL  = trDir == 1 ? low <= trSL : high >= trSL
+        bool  hitTP  = trDir == 1 ? high >= trTP : low <= trTP
+        bool  eodOut = flatEOD and not holdOK
+        float exitPx = na
+        if hitSL
+            exitPx := trSL
+            exitKind := trBE ? 0 : -1
+        else if hitTP
+            exitPx := trTP
+            exitKind := 1
+        else if eodOut
+            exitPx := close
+            exitKind := 2
+        if not na(exitPx)
+            float grossR = trDir * (exitPx - trEntry) / trRisk
+            float netR   = grossR - costPips * pip / trRisk
+            exitR := netR
+            bool isWin  = exitKind == 1 or (exitKind == 2 and netR > 0)
+            bool isLoss = exitKind == -1 or (exitKind == 2 and netR <= 0)
+            nTrades += 1
+            cumR += netR
+            if netR > 0
+                sumWin += netR
+            else
+                sumLoss += -netR
+            if isWin
+                nWins += 1
+                streak := 0
+            else if isLoss
+                nLoss += 1
+                streak += 1
+                maxStreak := math.max(maxStreak, streak)
+            else
+                nBE += 1
+            peakR := math.max(peakR, cumR)
+            maxDD := math.max(maxDD, peakR - cumR)
+            if showTrade
+                box.set_right(trTPBox, bar_index)
+                box.set_right(trSLBox, bar_index)
+            if showLevels
+                string rTxt = exitKind == 0 ? "BE" : (netR >= 0 ? "+" : "") + str.tostring(netR, "#.##") + "R"
+                label.new(bar_index, exitPx, rTxt, style = label.style_label_left, color = isWin ? color.new(bullCol, 20) : isLoss ? color.new(bearCol, 20) : color.new(color.gray, 20), textcolor = color.white, size = size.tiny)
+            trDir := 0
+        else
+            if showTrade
+                box.set_right(trTPBox, bar_index)
+                box.set_right(trSLBox, bar_index)
+            bool beHit = beR > 0 and not trBE and (trDir == 1 ? high >= trEntry + beR * trRisk : low <= trEntry - beR * trRisk)
+            if beHit
+                trBE := true
+                trSL := trEntry
+
+    bool flat = trDir == 0
+
+    // >>> SIGNAL-ENGINE-BEGIN (identical in the indicator and the strategy file)
+    // ---- 1) liquidity sweep scan (levels formed on earlier candles) ----
+    bool  swS = false
+    bool  swB = false
+    float lvS = na
+    float lvB = na
+    int   lbS = bar_index - 10
+    int   lbB = bar_index - 10
+    int nH = array.size(shP)
+    if nH > 0
+        for k = 0 to nH - 1
+            int   i   = nH - 1 - k
+            float lvH = array.get(shP, i)
+            int   lbH = array.get(shB, i)
+            if bar_index - lbH > maxAge
+                array.remove(shP, i)
+                array.remove(shB, i)
+            else if high > lvH
+                if close < lvH and high - lvH >= minSweep
+                    swS := true
+                    if na(lvS) or lvH > lvS
+                        lvS := lvH
+                        lbS := lbH
+                    array.remove(shP, i)
+                    array.remove(shB, i)
+                else if close >= lvH
+                    array.remove(shP, i)
+                    array.remove(shB, i)
+    int nL = array.size(slP)
+    if nL > 0
+        for k = 0 to nL - 1
+            int   i   = nL - 1 - k
+            float lvL = array.get(slP, i)
+            int   lbL = array.get(slB, i)
+            if bar_index - lbL > maxAge
+                array.remove(slP, i)
+                array.remove(slB, i)
+            else if low < lvL
+                if close > lvL and lvL - low >= minSweep
+                    swB := true
+                    if na(lvB) or lvL < lvB
+                        lvB := lvL
+                        lbB := lbL
+                    array.remove(slP, i)
+                    array.remove(slB, i)
+                else if close <= lvL
+                    array.remove(slP, i)
+                    array.remove(slB, i)
+
+    // register swing points confirmed on this candle (usable from the next candle)
+    if not na(ph)
+        array.unshift(shP, ph)
+        array.unshift(shB, bar_index - swingLen)
+        if array.size(shP) > 12
+            array.pop(shP)
+            array.pop(shB)
+    if not na(pl)
+        array.unshift(slP, pl)
+        array.unshift(slB, bar_index - swingLen)
+        if array.size(slP) > 12
+            array.pop(slP)
+            array.pop(slB)
+
+    float rUp = math.floor(high / rStep + 0.000000001) * rStep
+    float rDn = math.ceil(low / rStep - 0.000000001) * rStep
+    bool tSwS = useSwing and swS
+    bool tSwB = useSwing and swB
+    bool tPdS = usePDHL and dailyOK and not na(pdh) and high - pdh >= minSweep and close < pdh
+    bool tPdB = usePDHL and dailyOK and not na(pdl) and pdl - low >= minSweep and close > pdl
+    bool tAsS = useAsia and not inAsia and not na(asiaHiPrev) and high - asiaHiPrev >= minSweep and close < asiaHiPrev
+    bool tAsB = useAsia and not inAsia and not na(asiaLoPrev) and asiaLoPrev - low >= minSweep and close > asiaLoPrev
+    bool tRnS = useRound and high - rUp >= minSweep and close < rUp
+    bool tRnB = useRound and rDn - low >= minSweep and close > rDn
+
+    int confS = (tSwS ? 1 : 0) + (tPdS ? 1 : 0) + (tAsS ? 1 : 0) + (tRnS ? 1 : 0)
+    int confB = (tSwB ? 1 : 0) + (tPdB ? 1 : 0) + (tAsB ? 1 : 0) + (tRnB ? 1 : 0)
+    float rng = high - low
+    bool rejS = rng > 0 and (high - close) / rng >= minReject
+    bool rejB = rng > 0 and (close - low) / rng >= minReject
+
+    // ---- 2) a pending setup from an earlier candle: expire, invalidate or trigger ----
+    int    eDir = 0
+    float  eSL  = na
+    string eTxt = ""
+    if pendDir != 0 and bar_index > pendBar
+        if bar_index - pendBar > confirmBars
+            pendDir := 0
+        else if (pendDir == 1 and low <= pendSL) or (pendDir == -1 and high >= pendSL)
+            pendDir := 0
+        else if (pendDir == 1 and close > pendTrig) or (pendDir == -1 and close < pendTrig)
+            eDir := pendDir
+            eSL  := pendSL
+            eTxt := pendTxt
+            pendDir := 0
+
+    // ---- 3) a new sweep-and-reject candle ----
+    int newDir = 0
+    if confS >= minConf and rejS
+        newDir := -1
+    else if confB >= minConf and rejB
+        newDir := 1
+    if newDir != 0 and (not useBias or trend == newDir) and flat and eDir == 0
+        float  exS  = newDir == -1 ? high + buf : low - buf
+        string txt  = newDir == -1 ? (tSwS ? "Swing " : "") + (tPdS ? "PDH " : "") + (tAsS ? "Asia-high " : "") + (tRnS ? "Round " : "") : (tSwB ? "Swing " : "") + (tPdB ? "PDL " : "") + (tAsB ? "Asia-low " : "") + (tRnB ? "Round " : "")
+        float  lvl  = newDir == -1 ? (tSwS ? lvS : tPdS ? pdh : tAsS ? asiaHiPrev : rUp) : (tSwB ? lvB : tPdB ? pdl : tAsB ? asiaLoPrev : rDn)
+        int    lvlB = newDir == -1 ? (tSwS ? lbS : bar_index - 10) : (tSwB ? lbB : bar_index - 10)
+        if showLevels and not na(lvl)
+            line.new(lvlB, lvl, bar_index, lvl, color = color.new(newDir == 1 ? bullCol : bearCol, 20), style = line.style_dashed, width = 1)
+        if entryMode == "Immediate"
+            eDir := newDir
+            eSL  := exS
+            eTxt := txt
+        else
+            pendDir  := newDir
+            pendTrig := newDir == -1 ? low : high
+            pendSL   := exS
+            pendBar  := bar_index
+            pendTxt  := txt
+
+    // ---- 4) accept or reject the entry ----
+    if eDir != 0
+        float ePx   = close
+        float riskD = math.abs(ePx - eSL)
+        float riskP = riskD / pip
+        bool  okBias = not useBias or trend == eDir
+        bool  okRisk = riskP >= minStopPips and riskP <= maxStopPips
+        if okBias and okRisk and sessOK and flat and tradesToday < maxPerDay and bar_index - lastEntryBar >= cooldown
+            sigDir   := eDir
+            sigEntry := ePx
+            sigSL    := eSL
+            sigTP    := ePx + eDir * tpR * riskD
+            sigTxt   := eTxt
+            tradesToday += 1
+            lastEntryBar := bar_index
+
+    // <<< SIGNAL-ENGINE-END
+
+    // ---- 5) open the simulated trade and draw it ----
+    if sigDir != 0
+        trDir   := sigDir
+        trEntry := sigEntry
+        trSL    := sigSL
+        trTP    := sigTP
+        trRisk  := math.abs(sigEntry - sigSL)
+        trBE    := false
+        trBar   := bar_index
+        if showTrade
+            trTPBox := box.new(bar_index, sigDir == 1 ? sigTP : sigEntry, bar_index + 1, sigDir == 1 ? sigEntry : sigTP, border_color = color.new(bullCol, 30), bgcolor = color.new(bullCol, 88), border_width = 1)
+            trSLBox := box.new(bar_index, sigDir == 1 ? sigEntry : sigSL, bar_index + 1, sigDir == 1 ? sigSL : sigEntry, border_color = color.new(bearCol, 30), bgcolor = color.new(bearCol, 88), border_width = 1)
+        string tip = "Entry " + str.tostring(sigEntry, "#.#####") + "\nStop " + str.tostring(sigSL, "#.#####") + " (" + str.tostring(trRisk / pip, "#.#") + " pips)\nTarget " + str.tostring(sigTP, "#.#####") + " (" + str.tostring(tpR, "#.##") + "R)\nLiquidity swept: " + sigTxt + "\nHTF bias: " + (trend == 1 ? "bullish" : trend == -1 ? "bearish" : "neutral")
+        label.new(bar_index, sigDir == 1 ? low : high, sigDir == 1 ? "BUY" : "SELL", style = sigDir == 1 ? label.style_label_up : label.style_label_down, color = sigDir == 1 ? bullCol : bearCol, textcolor = color.white, size = size.small, tooltip = tip)
+
+// -----------------------------------------------------------------------------
+//  PLOTS
+// -----------------------------------------------------------------------------
+plot(showLevels and usePDHL and dailyOK ? pdh : na, "Previous day high", color = color.new(color.orange, 25), style = plot.style_stepline)
+plot(showLevels and usePDHL and dailyOK ? pdl : na, "Previous day low", color = color.new(color.orange, 25), style = plot.style_stepline)
+plot(showLevels and useAsia and not inAsia ? asiaHiPrev : na, "Asian high", color = color.new(color.blue, 25), style = plot.style_stepline)
+plot(showLevels and useAsia and not inAsia ? asiaLoPrev : na, "Asian low", color = color.new(color.blue, 25), style = plot.style_stepline)
+bgcolor(showSessBg and useSession and entryRaw ? color.new(color.gray, 93) : na)
+bgcolor(showSessBg and inAsia ? color.new(color.blue, 94) : na)
+
+plot(sigDir, "Signal (1 buy, -1 sell)", display = display.data_window)
+plot(sigEntry, "Signal entry", display = display.data_window)
+plot(sigSL, "Signal stop", display = display.data_window)
+plot(sigTP, "Signal target", display = display.data_window)
+plot(trend, "HTF trend", display = display.data_window)
+plot(exitKind, "Exit kind (1 TP, -1 SL, 0 BE, 2 EOD, 99 none)", display = display.data_window)
+plot(exitR, "Exit net R", display = display.data_window)
+plot(nTrades, "Sim trades", display = display.data_window)
+plot(cumR, "Sim net R", display = display.data_window)
+plot(maxDD, "Sim max drawdown R", display = display.data_window)
+
+// -----------------------------------------------------------------------------
+//  ALERTS
+// -----------------------------------------------------------------------------
+alertcondition(sigDir == 1, "AUDUSD BUY signal", "AUDUSD BUY signal on the {{interval}} chart, close {{close}}")
+alertcondition(sigDir == -1, "AUDUSD SELL signal", "AUDUSD SELL signal on the {{interval}} chart, close {{close}}")
+alertcondition(sigDir != 0, "AUDUSD any signal", "AUDUSD signal on the {{interval}} chart, close {{close}}")
+alertcondition(exitKind == 1, "Simulated trade hit target", "AUDUSD simulated trade hit its target")
+alertcondition(exitKind == -1 or exitKind == 0, "Simulated trade hit stop", "AUDUSD simulated trade hit its stop")
+
+if dynAlerts and sigDir != 0
+    alert((sigDir == 1 ? "BUY " : "SELL ") + syminfo.ticker + " " + timeframe.period + " @ " + str.tostring(sigEntry, "#.#####") + " | SL " + str.tostring(sigSL, "#.#####") + " | TP " + str.tostring(sigTP, "#.#####") + " | " + str.tostring(math.abs(sigEntry - sigSL) / pip, "#.#") + " pips risk | " + sigTxt, alert.freq_once_per_bar_close)
+if dynAlerts and exitKind != 99
+    alert(syminfo.ticker + " simulated trade closed: " + (exitKind == 1 ? "TARGET" : exitKind == -1 ? "STOP" : exitKind == 0 ? "BREAK-EVEN" : "SESSION END") + " (" + str.tostring(exitR, "#.##") + "R)", alert.freq_once_per_bar_close)
+
+// -----------------------------------------------------------------------------
+//  DASHBOARD
+// -----------------------------------------------------------------------------
+tblPos = dashPos == "Top right" ? position.top_right : dashPos == "Top left" ? position.top_left : dashPos == "Bottom right" ? position.bottom_right : position.bottom_left
+var table dash = table.new(tblPos, 2, 13, bgcolor = color.new(#131722, 8), border_width = 1, border_color = color.new(color.gray, 60))
+
+f_row(table t, int r, string k, string v, color c) =>
+    table.cell(t, 0, r, k, text_color = color.new(color.white, 25), text_halign = text.align_left, text_size = size.small)
+    table.cell(t, 1, r, v, text_color = c, text_halign = text.align_right, text_size = size.small)
+
+f_num(float x, string fmt) => na(x) ? "-" : str.tostring(x, fmt)
+
+if barstate.islast and showDash
+    float winRate  = nTrades > 0 ? nWins / nTrades * 100 : na
+    float nonLoss  = nTrades > 0 ? (nWins + nBE) / nTrades * 100 : na
+    float avgR     = nTrades > 0 ? cumR / nTrades : na
+    float pf       = sumLoss > 0 ? sumWin / sumLoss : na
+    string biasTxt = trend == 1 ? "BULLISH" : trend == -1 ? "BEARISH" : "NEUTRAL"
+    color  biasCol = trend == 1 ? bullCol : trend == -1 ? bearCol : color.gray
+    string setup   = pendDir == 0 ? "none" : (pendDir == 1 ? "BUY above " : "SELL below ") + str.tostring(pendTrig, "#.#####")
+    f_row(dash, 0, "AUDUSD Liquidity Sweep", mode, color.white)
+    f_row(dash, 1, "HTF bias (" + biasTF + ")", useBias ? biasTxt : "off", biasCol)
+    f_row(dash, 2, "Session", useSession ? (sessOK ? "open" : "closed") : "24h", sessOK ? color.white : color.gray)
+    f_row(dash, 3, "Pending setup", setup, pendDir == 0 ? color.gray : pendDir == 1 ? bullCol : bearCol)
+    f_row(dash, 4, "Sim trades", str.tostring(nTrades), color.white)
+    f_row(dash, 5, "Win rate (target hit)", f_num(winRate, "#.#") + "%", color.white)
+    f_row(dash, 6, "Not-loss rate (incl. BE)", f_num(nonLoss, "#.#") + "%", color.white)
+    f_row(dash, 7, "Average R per trade", f_num(avgR, "#.##"), avgR > 0 ? bullCol : bearCol)
+    f_row(dash, 8, "Profit factor", f_num(pf, "#.##"), pf > 1 ? bullCol : bearCol)
+    f_row(dash, 9, "Net R (after costs)", f_num(cumR, "#.##"), cumR > 0 ? bullCol : bearCol)
+    f_row(dash, 10, "Max drawdown (R)", f_num(maxDD, "#.##"), color.white)
+    f_row(dash, 11, "Max losing streak", str.tostring(maxStreak), color.white)
+    f_row(dash, 12, "Simulated on loaded candles", "cost " + str.tostring(costPips, "#.#") + " pip", color.gray)
