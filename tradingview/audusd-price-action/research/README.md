@@ -45,6 +45,7 @@ The first run parses the CSVs and writes a binary cache (`*_m1.bin`, git-ignored
 | `baseline.mjs`, `diag.mjs`, `candidates.mjs`, `robustness.mjs` | Sweep presets, diagnostics, candidate fixes, neighbourhood grid |
 | `event_study.mjs`, `event_study2.mjs`, `pd_study.mjs` | Drift after sweeps/breakouts, spikes, weekly levels, weekend gaps, previous-day failures |
 | `momentum_study.mjs`, `hourly.mjs`, `rollover.mjs`, `daily_scan.mjs` | Momentum, session predictability, hour-of-day profile, the 17:00 New York rollover, daily candle patterns |
+| `daily_flow_scan.mjs`, `ecb_fix_deep.mjs`, `daily_fade.mjs` | Daily scalps at 12 scheduled flow times (96 variants); deep dive and realistic simulation of the best one (13:15 London fade), which fails after costs |
 | **Tests on synthetic candles** (`tests/`) | |
 | `scen_fix.mjs` | 31 edge cases for the month-end scripts (month/year ends, weekends, daylight saving, exits, alerts) |
 | `scen_ind.mjs`, `scen_v2.mjs`, `verify_ind.mjs`, `cmp_strat3.mjs` | Sweep indicator scenarios, repaint checks, strategy parity |
