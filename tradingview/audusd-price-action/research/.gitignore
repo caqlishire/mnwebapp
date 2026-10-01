@@ -1,4 +1,4 @@
 node_modules/
 *.bin
 *.log
-*.json
+*_grid_is.json
