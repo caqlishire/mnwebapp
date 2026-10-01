@@ -4,7 +4,7 @@
 
 - **AUDUSD Month-End Fix Fade** (scalp, new): the only setup, out of about 300 tested variants, that made money after costs in three separate periods of real AUDUSD data, including a 2017-2020 period that was kept untouched until a single final test. The edge is real but small: about **+3 pips per trade, about 10 trades a year**.
 - **AUDUSD Liquidity Sweep** (v2, earlier): on the same real data it has **no edge**. The default scalp settings lost about 0.1R per trade after costs in every period. Do not trade its signals.
-- **No daily scalper survived.** Every daily setup tested lost its edge to a realistic 1 pip cost, including 96 fades/follow-ups at scheduled daily flow times, support/resistance break-and-retest (48 variants) and the ICT Silver Bullet (36 variants). See section 3.
+- **No daily scalper survived.** Every daily setup tested lost its edge to a realistic 1 pip cost, including 96 fades/follow-ups at scheduled daily flow times, support/resistance break-and-retest (48 variants) and five Inner Circle Trader (ICT) models (Silver Bullet, 2022 Mentorship model, Judas Swing / Power of 3, Optimal Trade Entry, order blocks; 122 variants). See section 3.
 
 | File | What it is |
 |---|---|
@@ -109,6 +109,12 @@ What the data says:
   - 96 daily scalps at scheduled flow times (Tokyo open and fix, Chinese and Australian data, Frankfurt and London opens, ECB fix, US 8:30 data, New York open and 10:00 cut, London fix), each fading or following the previous 30 minutes. The best one, fading the move into 13:15 London and holding 30 minutes, is positive before costs (+1.7 / +1.4 pips per trade in 2005-2012 / 2013-2016) but not after a realistic 1 pip cost: +0.6 and +0.3 pips with t-stats of 1.2 and 0.5, negative in 2013-2016 with any stop or at 1.5 pips cost, and drawdowns of several hundred pips because it holds through the 13:30 US data releases. It was rejected before the out-of-sample test.
   - **Support/resistance break and retest** (M5 and M15; swing and previous-day levels; 1R/1.5R/2R targets; with and without a higher-timeframe trend filter and a strong-break-candle filter; 48 variants): every variant lost in 2005-2012, -0.12R to -0.21R per trade after costs, and about -0.02R to -0.06R even before costs. Rejected at the first stage.
   - **ICT Silver Bullet** (first fair value gap inside the 03:00-04:00, 10:00-11:00 or 14:00-15:00 New York window on M5, limit entry at the gap edge or midpoint, with and without a prior liquidity raid, 1R/2R/3R; 36 variants, fills and exits on 1-minute data): the AM and PM windows lost in 2005-2012. The London-open window with a liquidity raid looked positive before costs in 2005-2012 (+0.15R to +0.21R; +0.03R to +0.07R after costs, not significant) but every one of its six variants lost in 2013-2016 (-0.11R to -0.24R). Rejected before the out-of-sample test.
+  - **More ICT models** (rules taken from published descriptions of his teaching; 74 variants; M5 signals, 1-minute fills, 1 pip cost):
+    - *2022 Mentorship model* (killzone sweep of the Asian or London range, market structure shift, entry in the displacement fair value gap, stop beyond the sweep): the New York killzone failed in 2013-2016. The London killzone was positive in 2005-2012 and 2013-2016 (+0.115R per trade, t 1.4, for the locked textbook version: gap midpoint, 1:3 reward-to-risk), so it was the one ICT candidate taken to the unseen 2017-2020 test. There it lost -0.15R per trade, and all 12 London variants lost (-0.15R to -0.48R).
+    - *Judas Swing / Power of 3* (London raid of the Asian range against the daily bias, beyond the midnight open, entry on the reclaim): all 18 variants lost in 2005-2012 (-0.12R to -0.25R).
+    - *Optimal Trade Entry* (70.5% retracement of a structure-breaking swing): 4 of 12 variants positive in 2005-2012, 1 of 12 in 2013-2016.
+    - *Order blocks* (mean-threshold or edge entry after a structure-breaking displacement): all 8 variants lost.
+    - *Silver Bullet v2* (first gap in the daily-bias direction, stop beyond the manipulation swing, 20 pip or 2R target): all 12 variants lost or broke even.
 
   Only the month-end fix fade held up in both earlier periods and then again on the unseen data.
 

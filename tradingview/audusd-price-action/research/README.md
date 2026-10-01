@@ -46,6 +46,7 @@ The first run parses the CSVs and writes a binary cache (`*_m1.bin`, git-ignored
 | `event_study.mjs`, `event_study2.mjs`, `pd_study.mjs` | Drift after sweeps/breakouts, spikes, weekly levels, weekend gaps, previous-day failures |
 | `momentum_study.mjs`, `hourly.mjs`, `rollover.mjs`, `daily_scan.mjs` | Momentum, session predictability, hour-of-day profile, the 17:00 New York rollover, daily candle patterns |
 | `bnr.mjs`, `bnr_grid.mjs` | Support/resistance break-and-retest engine and its 48-variant grid |
+| `ict.mjs`, `ict_grid.mjs`, `ict_val.mjs`, `ict_lock.mjs` | ICT 2022 model, Judas Swing, OTE, order blocks and Silver Bullet v2; 74-variant grid, 2013-2016 check, locked rule and its single 2017-2020 run |
 | `silver_bullet.mjs`, `sb_grid.mjs`, `sb_lo_check.mjs` | ICT Silver Bullet engine (1-minute fills), 36-variant grid, London-open robustness and 2013-2016 check |
 | `daily_flow_scan.mjs`, `ecb_fix_deep.mjs`, `daily_fade.mjs` | Daily scalps at 12 scheduled flow times (96 variants); deep dive and realistic simulation of the best one (13:15 London fade), which fails after costs |
 | **Tests on synthetic candles** (`tests/`) | |
