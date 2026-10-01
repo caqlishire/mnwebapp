@@ -1,6 +1,6 @@
 //@version=6
 // =============================================================================
-//  AUDUSD LIQUIDITY SWEEP - PURE PRICE ACTION
+//  AUDUSD LIQUIDITY SWEEP - PURE PRICE ACTION  (v2)
 //  -----------------------------------------------------------------------------
 //  No moving averages, oscillators, bands or any other lagging indicator.
 //  Every rule is read straight off the candles: swing points, highs, lows,
@@ -23,11 +23,16 @@
 //               opposite extreme (a small market-structure shift).
 //    4 Stop     Beyond the sweep extreme + buffer.
 //    5 Target   Fixed R multiple, optional break-even.
-//    6 Filters  Session, stop-size window, max trades per day, cooldown.
+//    6 Filters  Session, stop-size window, max trades per day, cooldown, and a
+//               daily circuit breaker (stop after N losing trades).
 //
-//  The dashboard simulates every signal on the candles loaded on YOUR chart
-//  (SL first if SL and TP share a candle, costs deducted) and reports win rate,
-//  profit factor, average R and max drawdown in R.
+//  EVIDENCE PANEL
+//    The dashboard simulates every signal on the candles loaded on YOUR chart
+//    (SL first if SL and TP share a candle, costs deducted). The second table
+//    shows a 95% confidence interval for the average R, a plain verdict, the two
+//    halves of the sample, how much of the profit comes from the best 3 trades,
+//    and results by liquidity type. Read the verdict before the equity curve:
+//    "no edge proven" is the normal outcome for small samples.
 //
 //  NOT FINANCIAL ADVICE. No strategy is guaranteed to be profitable and past
 //  results do not predict future results. Verify on your own data and forward
@@ -45,7 +50,7 @@ G_FLT  = "4. Filters"
 G_CST  = "5. Costs and display"
 G_CUS  = "6. Custom-mode values"
 
-mode = input.string("Scalp", "Trading mode", options = ["Scalp", "Swing", "Custom"], group = G_MODE, tooltip = "Scalp: M5-M15, London/NY session only, 1.5R target, break-even at 1R.\nSwing: M30-H4, any session, 2.5R target, break-even at 1.5R.\nCustom: uses the values in group 6.")
+mode = input.string("Scalp", "Trading mode", options = ["Scalp", "Swing", "Custom"], group = G_MODE, tooltip = "Scalp: M5-M15, London/NY session only, 1.5R target, break-even at 1R.\nSwing: M30-H4, any session, 2R target, break-even at 1R.\nCustom: uses the values in group 6.")
 
 swingLen  = input.int(5, "Swing length (bars each side)", minval = 2, maxval = 30, group = G_LIQ, tooltip = "A swing high/low is the highest high / lowest low of 2*N+1 candles. Larger = fewer but more significant levels.")
 useSwing  = input.bool(true, "Liquidity: swing highs / lows", group = G_LIQ)
@@ -70,18 +75,22 @@ biasLen  = input.int(3, "Bias swing length", minval = 2, maxval = 10, group = G_
 entrySess = input.session("0700-1530", "Entry window", group = G_FLT, tooltip = "New trades are only taken inside this window. Default 07:00-15:30 London = London open through New York morning. Ignored on charts of H4 and above.")
 holdSess  = input.session("0700-1700", "Hold-until window", group = G_FLT, tooltip = "With 'close open trades when the session ends' on, a trade still open after this window ends is closed at the market. Default 17:00 London = New York midday.")
 tradeTZ   = input.string("Europe/London", "Session time zone", options = ["Europe/London", "America/New_York", "UTC", "Australia/Sydney", "Asia/Tokyo"], group = G_FLT)
-maxPerDay = input.int(3, "Max trades per day", minval = 1, maxval = 20, group = G_FLT)
-cooldown  = input.int(6, "Minimum bars between trades", minval = 0, maxval = 200, group = G_FLT)
+maxPerDay    = input.int(3, "Max trades per day", minval = 1, maxval = 20, group = G_FLT)
+maxLossesDay = input.int(2, "Stop for the day after N losing trades (0 = off)", minval = 0, maxval = 10, group = G_FLT, tooltip = "A loss is a trade that ends at -0.5R or worse. Days on which several sweeps in a row fail are usually trend days; this stops the bleeding. The day rolls over at 17:00 New York.")
+cooldown     = input.int(6, "Minimum bars between trades", minval = 0, maxval = 200, group = G_FLT)
 
-costPips   = input.float(1.0, "Round-trip cost: spread + slippage (pips)", minval = 0.0, step = 0.1, group = G_CST, tooltip = "Deducted from every simulated trade in the dashboard statistics.")
-showLevels = input.bool(true, "Show PDH/PDL, Asian range and swept levels", group = G_CST)
-showTrade  = input.bool(true, "Show stop / target boxes", group = G_CST)
-showSessBg = input.bool(false, "Shade trading and Asian sessions", group = G_CST)
-showDash   = input.bool(true, "Show dashboard", group = G_CST)
-dashPos    = input.string("Top right", "Dashboard position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = G_CST)
-dynAlerts  = input.bool(true, "Send detailed alert() messages", group = G_CST, tooltip = "Create the alert with condition 'Any alert() function call' to receive entry, stop and target levels in the message.")
-bullCol    = input.color(#26a69a, "Buy colour", group = G_CST)
-bearCol    = input.color(#ef5350, "Sell colour", group = G_CST)
+costPips    = input.float(1.0, "Round-trip cost: spread + slippage (pips)", minval = 0.0, step = 0.1, group = G_CST, tooltip = "Deducted from every simulated trade in the dashboard statistics.")
+showLevels  = input.bool(true, "Show PDH/PDL, Asian range and swept levels", group = G_CST)
+showTrade   = input.bool(true, "Show stop / target boxes", group = G_CST)
+showPending = input.bool(true, "Show the trigger line of a pending setup", group = G_CST, tooltip = "A dotted line at the level a candle must close beyond to confirm the setup. It ends when the setup triggers, expires or is cancelled.")
+showSessBg  = input.bool(false, "Shade trading and Asian sessions", group = G_CST)
+showDash    = input.bool(true, "Show dashboard", group = G_CST)
+showDiag    = input.bool(true, "Show edge-diagnostics table", group = G_CST)
+dashPos     = input.string("Top right", "Dashboard position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = G_CST, tooltip = "The diagnostics table is placed on the opposite vertical side.")
+dynAlerts   = input.bool(true, "Send detailed alert() messages", group = G_CST, tooltip = "Create the alert with condition 'Any alert() function call' to receive entry, stop and target levels in the message.")
+alertFmt    = input.string("Text", "alert() message format", options = ["Text", "JSON"], group = G_CST, tooltip = "JSON output (symbol, action, entry, sl, tp) is meant for webhook bridges.")
+bullCol     = input.color(#26a69a, "Buy colour", group = G_CST)
+bearCol     = input.color(#ef5350, "Sell colour", group = G_CST)
 
 cMinStop = input.float(6.0, "Min stop (pips)", minval = 0.5, step = 0.5, group = G_CUS)
 cMaxStop = input.float(25.0, "Max stop (pips)", minval = 1.0, step = 1.0, group = G_CUS)
@@ -91,8 +100,8 @@ cSess    = input.bool(true, "Use session filter", group = G_CUS)
 
 float minStopPips = mode == "Scalp" ? 6.0 : mode == "Swing" ? 15.0 : cMinStop
 float maxStopPips = mode == "Scalp" ? 25.0 : mode == "Swing" ? 80.0 : cMaxStop
-float tpR         = mode == "Scalp" ? 1.5 : mode == "Swing" ? 2.5 : cTpR
-float beR         = mode == "Scalp" ? 1.0 : mode == "Swing" ? 1.5 : cBeR
+float tpR         = mode == "Scalp" ? 1.5 : mode == "Swing" ? 2.0 : cTpR
+float beR         = mode == "Scalp" ? 1.0 : mode == "Swing" ? 1.0 : cBeR
 bool  useSession  = mode == "Scalp" ? true : mode == "Swing" ? false : cSess
 
 // -----------------------------------------------------------------------------
@@ -174,18 +183,21 @@ var float  pendTrig     = na
 var float  pendSL       = na
 var int    pendBar      = 0
 var string pendTxt      = ""
+var line   pendLine     = na
 var int    lastEntryBar = -100000
 var int    tradesToday  = 0
+var int    lossesToday  = 0
 
-var int   trDir   = 0
-var float trEntry = na
-var float trSL    = na
-var float trTP    = na
-var float trRisk  = na
-var bool  trBE    = false
-var int   trBar   = 0
-var box   trTPBox = na
-var box   trSLBox = na
+var int    trDir   = 0
+var float  trEntry = na
+var float  trSL    = na
+var float  trTP    = na
+var float  trRisk  = na
+var bool   trBE    = false
+var int    trBar   = 0
+var string trTxt   = ""
+var box    trTPBox = na
+var box    trSLBox = na
 
 var int   nTrades = 0
 var int   nWins   = 0
@@ -194,10 +206,15 @@ var int   nBE     = 0
 var float sumWin  = 0.0
 var float sumLoss = 0.0
 var float cumR    = 0.0
+var float sumR2   = 0.0
 var float peakR   = 0.0
 var float maxDD   = 0.0
 var int   streak  = 0
 var int   maxStreak = 0
+var array<float> rAll = array.new<float>()
+var array<int>   catN = array.new<int>(7, 0)
+var array<int>   catW = array.new<int>(7, 0)
+var array<float> catR = array.new<float>(7, 0.0)
 
 int    sigDir   = 0
 float  sigEntry = na
@@ -213,6 +230,7 @@ float  exitR    = na
 if barstate.isconfirmed
     if newDay
         tradesToday := 0
+        lossesToday := 0
 
     // ---- simulated trade management (uses this candle's range; the entry candle is skipped) ----
     if trDir != 0 and bar_index > trBar
@@ -237,6 +255,10 @@ if barstate.isconfirmed
             bool isLoss = exitKind == -1 or (exitKind == 2 and netR <= 0)
             nTrades += 1
             cumR += netR
+            sumR2 += netR * netR
+            array.push(rAll, netR)
+            if netR <= -0.5
+                lossesToday += 1
             if netR > 0
                 sumWin += netR
             else
@@ -252,6 +274,14 @@ if barstate.isconfirmed
                 nBE += 1
             peakR := math.max(peakR, cumR)
             maxDD := math.max(maxDD, peakR - cumR)
+            int lvTypes = (str.contains(trTxt, "Swing") ? 1 : 0) + (str.contains(trTxt, "PD") ? 1 : 0) + (str.contains(trTxt, "Asia") ? 1 : 0) + (str.contains(trTxt, "Round") ? 1 : 0)
+            for ci = 0 to 6
+                bool inCat = ci == 0 ? str.contains(trTxt, "Swing") : ci == 1 ? str.contains(trTxt, "PD") : ci == 2 ? str.contains(trTxt, "Asia") : ci == 3 ? str.contains(trTxt, "Round") : ci == 4 ? lvTypes >= 2 : ci == 5 ? trDir == 1 : trDir == -1
+                if inCat
+                    array.set(catN, ci, array.get(catN, ci) + 1)
+                    array.set(catR, ci, array.get(catR, ci) + netR)
+                    if isWin
+                        array.set(catW, ci, array.get(catW, ci) + 1)
             if showTrade
                 box.set_right(trTPBox, bar_index)
                 box.set_right(trSLBox, bar_index)
@@ -364,6 +394,9 @@ if barstate.isconfirmed
             eSL  := pendSL
             eTxt := pendTxt
             pendDir := 0
+    if pendDir == 0 and not na(pendLine)
+        line.set_x2(pendLine, bar_index)
+        pendLine := na
 
     // ---- 3) a new sweep-and-reject candle ----
     int newDir = 0
@@ -383,11 +416,16 @@ if barstate.isconfirmed
             eSL  := exS
             eTxt := txt
         else
+            if not na(pendLine)
+                line.set_x2(pendLine, bar_index)
+                pendLine := na
             pendDir  := newDir
             pendTrig := newDir == -1 ? low : high
             pendSL   := exS
             pendBar  := bar_index
             pendTxt  := txt
+            if showPending
+                pendLine := line.new(bar_index, pendTrig, bar_index + confirmBars, pendTrig, color = color.new(newDir == 1 ? bullCol : bearCol, 35), style = line.style_dotted, width = 1)
 
     // ---- 4) accept or reject the entry ----
     if eDir != 0
@@ -396,7 +434,8 @@ if barstate.isconfirmed
         float riskP = riskD / pip
         bool  okBias = not useBias or trend == eDir
         bool  okRisk = riskP >= minStopPips and riskP <= maxStopPips
-        if okBias and okRisk and sessOK and flat and tradesToday < maxPerDay and bar_index - lastEntryBar >= cooldown
+        bool  okDay  = tradesToday < maxPerDay and (maxLossesDay == 0 or lossesToday < maxLossesDay)
+        if okBias and okRisk and okDay and sessOK and flat and bar_index - lastEntryBar >= cooldown
             sigDir   := eDir
             sigEntry := ePx
             sigSL    := eSL
@@ -416,10 +455,11 @@ if barstate.isconfirmed
         trRisk  := math.abs(sigEntry - sigSL)
         trBE    := false
         trBar   := bar_index
+        trTxt   := sigTxt
         if showTrade
             trTPBox := box.new(bar_index, sigDir == 1 ? sigTP : sigEntry, bar_index + 1, sigDir == 1 ? sigEntry : sigTP, border_color = color.new(bullCol, 30), bgcolor = color.new(bullCol, 88), border_width = 1)
             trSLBox := box.new(bar_index, sigDir == 1 ? sigEntry : sigSL, bar_index + 1, sigDir == 1 ? sigSL : sigEntry, border_color = color.new(bearCol, 30), bgcolor = color.new(bearCol, 88), border_width = 1)
-        string tip = "Entry " + str.tostring(sigEntry, "#.#####") + "\nStop " + str.tostring(sigSL, "#.#####") + " (" + str.tostring(trRisk / pip, "#.#") + " pips)\nTarget " + str.tostring(sigTP, "#.#####") + " (" + str.tostring(tpR, "#.##") + "R)\nLiquidity swept: " + sigTxt + "\nHTF bias: " + (trend == 1 ? "bullish" : trend == -1 ? "bearish" : "neutral")
+        string tip = "Entry " + str.tostring(sigEntry, format.mintick) + "\nStop " + str.tostring(sigSL, format.mintick) + " (" + str.tostring(trRisk / pip, "#.#") + " pips)\nTarget " + str.tostring(sigTP, format.mintick) + " (" + str.tostring(tpR, "#.##") + "R)\nLiquidity swept: " + sigTxt + "\nHTF bias: " + (trend == 1 ? "bullish" : trend == -1 ? "bearish" : "neutral")
         label.new(bar_index, sigDir == 1 ? low : high, sigDir == 1 ? "BUY" : "SELL", style = sigDir == 1 ? label.style_label_up : label.style_label_down, color = sigDir == 1 ? bullCol : bearCol, textcolor = color.white, size = size.small, tooltip = tip)
 
 // -----------------------------------------------------------------------------
@@ -453,21 +493,33 @@ alertcondition(exitKind == 1, "Simulated trade hit target", "AUDUSD simulated tr
 alertcondition(exitKind == -1 or exitKind == 0, "Simulated trade hit stop", "AUDUSD simulated trade hit its stop")
 
 if dynAlerts and sigDir != 0
-    alert((sigDir == 1 ? "BUY " : "SELL ") + syminfo.ticker + " " + timeframe.period + " @ " + str.tostring(sigEntry, "#.#####") + " | SL " + str.tostring(sigSL, "#.#####") + " | TP " + str.tostring(sigTP, "#.#####") + " | " + str.tostring(math.abs(sigEntry - sigSL) / pip, "#.#") + " pips risk | " + sigTxt, alert.freq_once_per_bar_close)
+    string sideTxt = sigDir == 1 ? "buy" : "sell"
+    string alertMsg = alertFmt == "JSON" ? '{"symbol":"' + syminfo.ticker + '","action":"' + sideTxt + '","entry":' + str.tostring(sigEntry, format.mintick) + ',"sl":' + str.tostring(sigSL, format.mintick) + ',"tp":' + str.tostring(sigTP, format.mintick) + '}' : str.upper(sideTxt) + " " + syminfo.ticker + " " + timeframe.period + " @ " + str.tostring(sigEntry, format.mintick) + " | SL " + str.tostring(sigSL, format.mintick) + " | TP " + str.tostring(sigTP, format.mintick) + " | " + str.tostring(math.abs(sigEntry - sigSL) / pip, "#.#") + " pips risk | " + sigTxt
+    alert(alertMsg, alert.freq_once_per_bar_close)
 if dynAlerts and exitKind != 99
     alert(syminfo.ticker + " simulated trade closed: " + (exitKind == 1 ? "TARGET" : exitKind == -1 ? "STOP" : exitKind == 0 ? "BREAK-EVEN" : "SESSION END") + " (" + str.tostring(exitR, "#.##") + "R)", alert.freq_once_per_bar_close)
 
 // -----------------------------------------------------------------------------
-//  DASHBOARD
+//  DASHBOARD AND EDGE DIAGNOSTICS
 // -----------------------------------------------------------------------------
-tblPos = dashPos == "Top right" ? position.top_right : dashPos == "Top left" ? position.top_left : dashPos == "Bottom right" ? position.bottom_right : position.bottom_left
-var table dash = table.new(tblPos, 2, 13, bgcolor = color.new(#131722, 8), border_width = 1, border_color = color.new(color.gray, 60))
+tblPos  = dashPos == "Top right" ? position.top_right : dashPos == "Top left" ? position.top_left : dashPos == "Bottom right" ? position.bottom_right : position.bottom_left
+tblPos2 = dashPos == "Top right" ? position.bottom_right : dashPos == "Top left" ? position.bottom_left : dashPos == "Bottom right" ? position.top_right : position.top_left
+var table dash = table.new(tblPos, 2, 15, bgcolor = color.new(#131722, 8), border_width = 1, border_color = color.new(color.gray, 60))
+var table diag = table.new(tblPos2, 4, 12, bgcolor = color.new(#131722, 8), border_width = 1, border_color = color.new(color.gray, 60))
 
 f_row(table t, int r, string k, string v, color c) =>
     table.cell(t, 0, r, k, text_color = color.new(color.white, 25), text_halign = text.align_left, text_size = size.small)
     table.cell(t, 1, r, v, text_color = c, text_halign = text.align_right, text_size = size.small)
 
+f_row4(table t, int r, string a, string b, string c, string d, color col) =>
+    table.cell(t, 0, r, a, text_color = color.new(color.white, 25), text_halign = text.align_left, text_size = size.small)
+    table.cell(t, 1, r, b, text_color = col, text_halign = text.align_right, text_size = size.small)
+    table.cell(t, 2, r, c, text_color = col, text_halign = text.align_right, text_size = size.small)
+    table.cell(t, 3, r, d, text_color = col, text_halign = text.align_right, text_size = size.small)
+
 f_num(float x, string fmt) => na(x) ? "-" : str.tostring(x, fmt)
+f_pct(float x, string fmt) => na(x) ? "-" : str.tostring(x, fmt) + "%"
+f_sgn(float x) => na(x) ? "-" : (x > 0 ? "+" : "") + str.tostring(x, "#.##")
 
 if barstate.islast and showDash
     float winRate  = nTrades > 0 ? nWins / nTrades * 100 : na
@@ -476,17 +528,69 @@ if barstate.islast and showDash
     float pf       = sumLoss > 0 ? sumWin / sumLoss : na
     string biasTxt = trend == 1 ? "BULLISH" : trend == -1 ? "BEARISH" : "NEUTRAL"
     color  biasCol = trend == 1 ? bullCol : trend == -1 ? bearCol : color.gray
-    string setup   = pendDir == 0 ? "none" : (pendDir == 1 ? "BUY above " : "SELL below ") + str.tostring(pendTrig, "#.#####")
+    string setup   = pendDir == 0 ? "none" : (pendDir == 1 ? "BUY above " : "SELL below ") + str.tostring(pendTrig, format.mintick)
+    bool   locked  = maxLossesDay > 0 and lossesToday >= maxLossesDay
     f_row(dash, 0, "AUDUSD Liquidity Sweep", mode, color.white)
     f_row(dash, 1, "HTF bias (" + biasTF + ")", useBias ? biasTxt : "off", biasCol)
     f_row(dash, 2, "Session", useSession ? (sessOK ? "open" : "closed") : "24h", sessOK ? color.white : color.gray)
     f_row(dash, 3, "Pending setup", setup, pendDir == 0 ? color.gray : pendDir == 1 ? bullCol : bearCol)
-    f_row(dash, 4, "Sim trades", str.tostring(nTrades), color.white)
-    f_row(dash, 5, "Win rate (target hit)", f_num(winRate, "#.#") + "%", color.white)
-    f_row(dash, 6, "Not-loss rate (incl. BE)", f_num(nonLoss, "#.#") + "%", color.white)
-    f_row(dash, 7, "Average R per trade", f_num(avgR, "#.##"), avgR > 0 ? bullCol : bearCol)
-    f_row(dash, 8, "Profit factor", f_num(pf, "#.##"), pf > 1 ? bullCol : bearCol)
-    f_row(dash, 9, "Net R (after costs)", f_num(cumR, "#.##"), cumR > 0 ? bullCol : bearCol)
-    f_row(dash, 10, "Max drawdown (R)", f_num(maxDD, "#.##"), color.white)
-    f_row(dash, 11, "Max losing streak", str.tostring(maxStreak), color.white)
-    f_row(dash, 12, "Simulated on loaded candles", "cost " + str.tostring(costPips, "#.#") + " pip", color.gray)
+    f_row(dash, 4, "Today: trades / losses", str.tostring(tradesToday) + " / " + str.tostring(lossesToday) + (locked ? "  LOCKED" : ""), locked ? bearCol : color.white)
+    f_row(dash, 5, "Sim trades", str.tostring(nTrades), color.white)
+    f_row(dash, 6, "Win rate (target hit)", f_pct(winRate, "#.#"), color.white)
+    f_row(dash, 7, "Coin-flip win rate at " + str.tostring(tpR, "#.##") + "R", f_pct(100 / (1 + tpR), "#.#"), color.gray)
+    f_row(dash, 8, "Not-loss rate (incl. BE)", f_pct(nonLoss, "#.#"), color.white)
+    f_row(dash, 9, "Average R per trade", f_num(avgR, "#.##"), avgR > 0 ? bullCol : bearCol)
+    f_row(dash, 10, "Profit factor", f_num(pf, "#.##"), pf > 1 ? bullCol : bearCol)
+    f_row(dash, 11, "Net R (after costs)", f_num(cumR, "#.##"), cumR > 0 ? bullCol : bearCol)
+    f_row(dash, 12, "Max drawdown (R)", f_num(maxDD, "#.##"), color.white)
+    f_row(dash, 13, "Max losing streak", str.tostring(maxStreak), color.white)
+    f_row(dash, 14, "Simulated on loaded candles", "cost " + str.tostring(costPips, "#.#") + " pip", color.gray)
+
+if barstate.islast and showDiag
+    int   n    = nTrades
+    float mean = n > 0 ? cumR / n : na
+    float sd   = n > 1 ? math.sqrt(math.max(0.0, (sumR2 - n * mean * mean) / (n - 1))) : na
+    float se   = n > 1 ? sd / math.sqrt(n) : na
+    float lo   = mean - 1.96 * se
+    float hi   = mean + 1.96 * se
+    string verdict = n < 30 ? "too few trades (n < 30)" : lo > 0 ? "edge likely (CI above 0)" : hi < 0 ? "negative expectancy" : "no edge proven (CI spans 0)"
+    color  vCol    = n < 30 ? color.gray : lo > 0 ? bullCol : hi < 0 ? bearCol : color.orange
+    float  half1 = na
+    float  half2 = na
+    float  top3  = na
+    if n >= 2
+        int   h  = math.floor(n / 2.0)
+        float s1 = 0.0
+        float s2 = 0.0
+        for j = 0 to n - 1
+            float rv = array.get(rAll, j)
+            if j < h
+                s1 += rv
+            else
+                s2 += rv
+        half1 := s1 / h
+        half2 := s2 / (n - h)
+        array<float> srt = array.copy(rAll)
+        array.sort(srt, order.descending)
+        float t3 = 0.0
+        for j = 0 to math.min(3, n) - 1
+            t3 += array.get(srt, j)
+        top3 := cumR > 0 ? t3 / cumR * 100 : na
+    f_row4(diag, 0, "Edge diagnostics (net R)", "n", "Win %", "Avg R", color.white)
+    string catName0 = "Swing level swept"
+    string catName1 = "Prev-day high/low"
+    string catName2 = "Asian high/low"
+    string catName3 = "Round number"
+    string catName4 = "2+ level types"
+    string catName5 = "Buys"
+    string catName6 = "Sells"
+    for ci = 0 to 6
+        string nm = ci == 0 ? catName0 : ci == 1 ? catName1 : ci == 2 ? catName2 : ci == 3 ? catName3 : ci == 4 ? catName4 : ci == 5 ? catName5 : catName6
+        int    cn = array.get(catN, ci)
+        float  cw = cn > 0 ? array.get(catW, ci) / cn * 100 : na
+        float  ca = cn > 0 ? array.get(catR, ci) / cn : na
+        f_row4(diag, ci + 1, nm, str.tostring(cn), f_pct(cw, "#"), f_sgn(ca), ca > 0 ? bullCol : cn > 0 ? bearCol : color.gray)
+    f_row4(diag, 8, "Avg R, 95% interval", f_sgn(mean), "[" + f_sgn(lo), f_sgn(hi) + "]", color.white)
+    f_row4(diag, 9, "Verdict", verdict, "", "", vCol)
+    f_row4(diag, 10, "Avg R: 1st half / 2nd half", f_sgn(half1), "/", f_sgn(half2), color.white)
+    f_row4(diag, 11, "Best 3 trades = % of net R", na(top3) ? "n/a (net R <= 0)" : f_pct(top3, "#"), "", "", color.white)

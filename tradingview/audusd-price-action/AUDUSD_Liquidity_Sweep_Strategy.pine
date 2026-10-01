@@ -19,7 +19,9 @@
 //
 //  Orders are placed at the CLOSE of the signal candle (process_orders_on_close),
 //  stop and target are attached immediately, and the stop moves to the real fill
-//  price once the break-even trigger is reached.
+//  price once the break-even trigger is reached. Default risk is 0.5% of equity per
+//  trade: with a profit factor near 1 the drawdown in % is roughly the drawdown in R
+//  times the risk per trade, so size small until the Strategy Tester agrees.
 //
 //  NOT FINANCIAL ADVICE. No strategy is guaranteed to be profitable and past
 //  results do not predict future results.
@@ -36,7 +38,7 @@ G_FLT  = "4. Filters"
 G_CST  = "5. Risk and display"
 G_CUS  = "6. Custom-mode values"
 
-mode = input.string("Scalp", "Trading mode", options = ["Scalp", "Swing", "Custom"], group = G_MODE, tooltip = "Scalp: M5-M15, London/NY session only, 1.5R target, break-even at 1R.\nSwing: M30-H4, any session, 2.5R target, break-even at 1.5R.\nCustom: uses the values in group 6.")
+mode = input.string("Scalp", "Trading mode", options = ["Scalp", "Swing", "Custom"], group = G_MODE, tooltip = "Scalp: M5-M15, London/NY session only, 1.5R target, break-even at 1R.\nSwing: M30-H4, any session, 2R target, break-even at 1R.\nCustom: uses the values in group 6.")
 
 swingLen  = input.int(5, "Swing length (bars each side)", minval = 2, maxval = 30, group = G_LIQ, tooltip = "A swing high/low is the highest high / lowest low of 2*N+1 candles. Larger = fewer but more significant levels.")
 useSwing  = input.bool(true, "Liquidity: swing highs / lows", group = G_LIQ)
@@ -61,18 +63,20 @@ biasLen  = input.int(3, "Bias swing length", minval = 2, maxval = 10, group = G_
 entrySess = input.session("0700-1530", "Entry window", group = G_FLT, tooltip = "New trades are only taken inside this window. Default 07:00-15:30 London = London open through New York morning. Ignored on charts of H4 and above.")
 holdSess  = input.session("0700-1700", "Hold-until window", group = G_FLT, tooltip = "With 'close open trades when the session ends' on, a trade still open after this window ends is closed at the market. Default 17:00 London = New York midday.")
 tradeTZ   = input.string("Europe/London", "Session time zone", options = ["Europe/London", "America/New_York", "UTC", "Australia/Sydney", "Asia/Tokyo"], group = G_FLT)
-maxPerDay = input.int(3, "Max trades per day", minval = 1, maxval = 20, group = G_FLT)
-cooldown  = input.int(6, "Minimum bars between trades", minval = 0, maxval = 200, group = G_FLT)
+maxPerDay    = input.int(3, "Max trades per day", minval = 1, maxval = 20, group = G_FLT)
+maxLossesDay = input.int(2, "Stop for the day after N losing trades (0 = off)", minval = 0, maxval = 10, group = G_FLT, tooltip = "A loss is a trade that ends at -0.5R or worse. Days on which several sweeps in a row fail are usually trend days; this stops the bleeding. The day rolls over at 17:00 New York.")
+cooldown     = input.int(6, "Minimum bars between trades", minval = 0, maxval = 200, group = G_FLT)
 
-riskPct    = input.float(1.0, "Risk per trade (% of equity)", minval = 0.1, maxval = 10.0, step = 0.1, group = G_CST, tooltip = "Position size = risk amount / stop distance. Sized for a USD account on a USD-quoted pair (AUDUSD).")
+riskPct    = input.float(0.5, "Risk per trade (% of equity)", minval = 0.1, maxval = 10.0, step = 0.1, group = G_CST, tooltip = "Position size = risk amount / stop distance. Sized for a USD account on a USD-quoted pair (AUDUSD).")
 maxLev     = input.float(30.0, "Maximum leverage (position value / equity)", minval = 1.0, maxval = 500.0, group = G_CST, tooltip = "Caps the position size on very tight stops.")
 useDates   = input.bool(false, "Limit trading to a date range", group = G_CST, tooltip = "Use it to keep an out-of-sample period untouched: optimise or judge on one range, then check the other.")
 dStart     = input.time(timestamp("01 Jan 2023 00:00 +0000"), "Range start", group = G_CST)
 dEnd       = input.time(timestamp("01 Jan 2100 00:00 +0000"), "Range end", group = G_CST)
 showLevels = input.bool(true, "Show PDH/PDL, Asian range and swept levels", group = G_CST)
-showSessBg = input.bool(false, "Shade trading and Asian sessions", group = G_CST)
-bullCol    = input.color(#26a69a, "Buy colour", group = G_CST)
-bearCol    = input.color(#ef5350, "Sell colour", group = G_CST)
+showPending = input.bool(true, "Show the trigger line of a pending setup", group = G_CST, tooltip = "A dotted line at the level a candle must close beyond to confirm the setup. It ends when the setup triggers, expires or is cancelled.")
+showSessBg  = input.bool(false, "Shade trading and Asian sessions", group = G_CST)
+bullCol     = input.color(#26a69a, "Buy colour", group = G_CST)
+bearCol     = input.color(#ef5350, "Sell colour", group = G_CST)
 
 cMinStop = input.float(6.0, "Min stop (pips)", minval = 0.5, step = 0.5, group = G_CUS)
 cMaxStop = input.float(25.0, "Max stop (pips)", minval = 1.0, step = 1.0, group = G_CUS)
@@ -82,8 +86,8 @@ cSess    = input.bool(true, "Use session filter", group = G_CUS)
 
 float minStopPips = mode == "Scalp" ? 6.0 : mode == "Swing" ? 15.0 : cMinStop
 float maxStopPips = mode == "Scalp" ? 25.0 : mode == "Swing" ? 80.0 : cMaxStop
-float tpR         = mode == "Scalp" ? 1.5 : mode == "Swing" ? 2.5 : cTpR
-float beR         = mode == "Scalp" ? 1.0 : mode == "Swing" ? 1.5 : cBeR
+float tpR         = mode == "Scalp" ? 1.5 : mode == "Swing" ? 2.0 : cTpR
+float beR         = mode == "Scalp" ? 1.0 : mode == "Swing" ? 1.0 : cBeR
 bool  useSession  = mode == "Scalp" ? true : mode == "Swing" ? false : cSess
 
 // -----------------------------------------------------------------------------
@@ -166,13 +170,17 @@ var float  pendTrig     = na
 var float  pendSL       = na
 var int    pendBar      = 0
 var string pendTxt      = ""
+var line   pendLine     = na
 var int    lastEntryBar = -100000
 var int    tradesToday  = 0
+var int    lossesToday  = 0
 
-var int   stDir  = 0
-var float stTP   = na
-var float stRisk = na
-var bool  beDone = false
+var int   stDir    = 0
+var float stTP     = na
+var float stRisk   = na
+var bool  beDone   = false
+var float lastNet  = 0.0
+var float riskCash = na
 
 int    sigDir   = 0
 float  sigEntry = na
@@ -186,6 +194,14 @@ string sigTxt   = ""
 if barstate.isconfirmed
     if newDay
         tradesToday := 0
+        lossesToday := 0
+
+    // ---- circuit breaker bookkeeping: a closed trade of -0.5R or worse counts as a loss ----
+    float dNet = strategy.netprofit - lastNet
+    if dNet != 0
+        lastNet := strategy.netprofit
+        if not na(riskCash) and dNet / riskCash <= -0.5
+            lossesToday += 1
 
     // ---- manage the open position (the entry candle is skipped: orders fill at its close) ----
     if strategy.position_size != 0
@@ -292,6 +308,9 @@ if barstate.isconfirmed
             eSL  := pendSL
             eTxt := pendTxt
             pendDir := 0
+    if pendDir == 0 and not na(pendLine)
+        line.set_x2(pendLine, bar_index)
+        pendLine := na
 
     // ---- 3) a new sweep-and-reject candle ----
     int newDir = 0
@@ -311,11 +330,16 @@ if barstate.isconfirmed
             eSL  := exS
             eTxt := txt
         else
+            if not na(pendLine)
+                line.set_x2(pendLine, bar_index)
+                pendLine := na
             pendDir  := newDir
             pendTrig := newDir == -1 ? low : high
             pendSL   := exS
             pendBar  := bar_index
             pendTxt  := txt
+            if showPending
+                pendLine := line.new(bar_index, pendTrig, bar_index + confirmBars, pendTrig, color = color.new(newDir == 1 ? bullCol : bearCol, 35), style = line.style_dotted, width = 1)
 
     // ---- 4) accept or reject the entry ----
     if eDir != 0
@@ -324,7 +348,8 @@ if barstate.isconfirmed
         float riskP = riskD / pip
         bool  okBias = not useBias or trend == eDir
         bool  okRisk = riskP >= minStopPips and riskP <= maxStopPips
-        if okBias and okRisk and sessOK and flat and tradesToday < maxPerDay and bar_index - lastEntryBar >= cooldown
+        bool  okDay  = tradesToday < maxPerDay and (maxLossesDay == 0 or lossesToday < maxLossesDay)
+        if okBias and okRisk and okDay and sessOK and flat and bar_index - lastEntryBar >= cooldown
             sigDir   := eDir
             sigEntry := ePx
             sigSL    := eSL
@@ -343,6 +368,7 @@ if barstate.isconfirmed
         stTP   := sigTP
         stRisk := riskD
         beDone := false
+        riskCash := qty * riskD
         if sigDir == 1
             strategy.entry("L", strategy.long, qty = qty, comment = "BUY")
             strategy.exit("X", from_entry = "L", stop = sigSL, limit = sigTP)
