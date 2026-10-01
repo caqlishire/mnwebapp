@@ -1,0 +1,164 @@
+//@version=6
+// =============================================================================
+//  AUDUSD MONTH-END FIX FADE  |  STRATEGY (Strategy Tester version)
+//  -----------------------------------------------------------------------------
+//  Same rules as the "AUDUSD Month-End Fix Fade" indicator: the block between
+//  FIX-ENGINE-BEGIN and FIX-ENGINE-END is byte-identical in both files.
+//
+//  RULES (London time): on the last trading day of the month, measure the move
+//  from 15:30 to 16:00; if it is at least 3 pips, trade against it at 16:00
+//  with a 20 pip stop, target = the 15:30 price, and close at 17:00 otherwise.
+//
+//  FILLS: signals are decided at the close of the bar that ends at 16:00; the
+//  market order then fills at the NEXT bar's open (the first price after the
+//  fix), like a trader acting on the alert. The 17:00 exit fills the same way.
+//
+//  COSTS: commission is set to 0.00005 USD per unit per order = 1 pip round
+//  trip, the same cost used in the research (Oanda AUDUSD 1-minute data,
+//  2005-2020, first-price-after-the-fix entries: 158 trades, 69% winners,
+//  +2.9 pips average, profit factor 1.8).
+//
+//  TESTING: use a 5 or 15 minute AUDUSD chart. Month-ends are rare (about 10
+//  trades a year), so the bars loaded on a normal plan show only a few trades;
+//  Deep Backtesting (premium) covers more history.
+//
+//  NOT FINANCIAL ADVICE. Past results do not guarantee future results.
+// =============================================================================
+strategy("AUDUSD Month-End Fix Fade (Strategy)", shorttitle = "AUD ME Fix STR", overlay = true, initial_capital = 10000, currency = currency.USD, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = false, calc_on_every_tick = false, slippage = 0, commission_type = strategy.commission.cash_per_contract, commission_value = 0.00005, margin_long = 1, margin_short = 1)
+
+// -----------------------------------------------------------------------------
+//  INPUTS
+// -----------------------------------------------------------------------------
+G_RULE = "1. Rules (tested defaults)"
+
+dayMode  = input.string("Last trading day of month", "Days to trade", options = ["Last trading day of month", "Every weekday (no edge - comparison only)"], group = G_RULE, tooltip = "The tested edge exists only on the last trading day of the month. 'Every weekday' is there so you can see for yourself that ordinary days do not work.")
+preMins  = input.int(30, "Measure the move over the last N minutes before 16:00", minval = 5, maxval = 120, step = 5, group = G_RULE)
+minMove  = input.float(3.0, "Minimum pre-fix move (pips)", minval = 0.0, step = 0.5, group = G_RULE)
+stopPips = input.float(20.0, "Stop loss (pips)", minval = 1.0, step = 1.0, group = G_RULE)
+tgtMode  = input.string("Give back the whole pre-fix move", "Target", options = ["Give back the whole pre-fix move", "None - time exit only"], group = G_RULE)
+holdMins = input.int(60, "Close the trade N minutes after 16:00", minval = 5, maxval = 240, step = 5, group = G_RULE)
+
+G_RISK = "2. Risk"
+riskPct = input.float(1.0, "Risk per trade (% of equity)", minval = 0.1, maxval = 10.0, step = 0.1, group = G_RISK, tooltip = "Position size = risk amount / stop distance (USD account, USD-quoted pair).")
+maxLev  = input.float(30.0, "Maximum leverage (position value / equity)", minval = 1.0, maxval = 500.0, group = G_RISK)
+showWin = input.bool(true, "Shade the pre-fix window and the trade window", group = G_RISK)
+
+// -----------------------------------------------------------------------------
+//  CLOCK AND CALENDAR (London time)
+// -----------------------------------------------------------------------------
+string TZ = "Europe/London"
+float pip    = syminfo.mintick < 0.0001 ? syminfo.mintick * 10 : syminfo.mintick
+int   tfSec  = timeframe.in_seconds()
+bool  tfOK   = timeframe.isintraday and tfSec <= preMins * 60 and (preMins * 60) % tfSec == 0 and (holdMins * 60) % tfSec == 0
+int   fixMin = 16 * 60
+int   refMin = fixMin - preMins
+int   endMin = fixMin + holdMins
+
+int   openMin  = hour(time, TZ) * 60 + minute(time, TZ)
+int   closeMin = hour(time_close, TZ) * 60 + minute(time_close, TZ)
+int   dateKey  = year(time, TZ) * 10000 + month(time, TZ) * 100 + dayofmonth(time, TZ)
+
+// last Monday-Friday date of the month of time t (London calendar)
+f_isLastTradingDay(int t) =>
+    int y  = year(t, TZ)
+    int m  = month(t, TZ)
+    int d  = dayofmonth(t, TZ)
+    int ny = m == 12 ? y + 1 : y
+    int nm = m == 12 ? 1 : m + 1
+    int lastDom = dayofmonth(timestamp(TZ, ny, nm, 1, 0, 0) - 12 * 3600000, TZ)
+    int dowLast = dayofweek(timestamp(TZ, y, m, lastDom, 12, 0), TZ)
+    int lastTD  = dowLast == dayofweek.saturday ? lastDom - 1 : dowLast == dayofweek.sunday ? lastDom - 2 : lastDom
+    d == lastTD
+
+bool isMonthEnd = f_isLastTradingDay(time)
+bool isWeekday  = dayofweek(time, TZ) != dayofweek.saturday and dayofweek(time, TZ) != dayofweek.sunday
+bool dayOK      = dayMode == "Last trading day of month" ? isMonthEnd : isWeekday
+
+// -----------------------------------------------------------------------------
+//  STATE
+// -----------------------------------------------------------------------------
+var float refPx   = na
+var int   refDate = 0
+
+var int   trDir   = 0
+var float trEntry = na
+var float trSL    = na
+var float trTP    = na
+var int   trBar   = 0
+var int   trDate  = 0
+
+int    sigDir   = 0
+float  sigEntry = na
+float  sigSL    = na
+float  sigTP    = na
+float  sigMove  = na
+int    exitKind = 99
+float  exitPips = na
+
+// -----------------------------------------------------------------------------
+//  ENGINE - runs once per CLOSED bar
+// -----------------------------------------------------------------------------
+if barstate.isconfirmed and tfOK
+    // >>> FIX-ENGINE-BEGIN (identical in the indicator and the strategy file)
+    // ---- manage an open trade (from the bar after entry) ----
+    if trDir != 0 and bar_index > trBar
+        bool  hitSL   = trDir == 1 ? low <= trSL : high >= trSL
+        bool  hitTP   = not na(trTP) and (trDir == 1 ? high >= trTP : low <= trTP)
+        bool  timeUp  = closeMin >= endMin or dateKey != trDate
+        float exitPx  = na
+        if hitSL
+            exitPx   := trSL
+            exitKind := -1
+        else if hitTP
+            exitPx   := trTP
+            exitKind := 1
+        else if timeUp
+            exitPx   := close
+            exitKind := 2
+        if not na(exitPx)
+            exitPips := trDir * (exitPx - trEntry) / pip
+            trDir := 0
+
+    // ---- 15:30 reference price ----
+    if dayOK and closeMin == refMin
+        refPx   := close
+        refDate := dateKey
+
+    // ---- 16:00: fade the pre-fix move ----
+    if dayOK and closeMin == fixMin and refDate == dateKey and not na(refPx) and trDir == 0
+        float mv = (close - refPx) / pip
+        if math.abs(mv) >= minMove and mv != 0
+            sigDir   := mv > 0 ? -1 : 1
+            sigEntry := close
+            sigSL    := close - sigDir * stopPips * pip
+            sigTP    := tgtMode == "Give back the whole pre-fix move" ? refPx : na
+            sigMove  := mv
+            trDir    := sigDir
+            trEntry  := sigEntry
+            trSL     := sigSL
+            trTP     := sigTP
+            trBar    := bar_index
+            trDate   := dateKey
+    // <<< FIX-ENGINE-END
+
+    // ---- orders ----
+    if exitKind == 2 and strategy.position_size != 0
+        strategy.close_all(comment = "17:00 exit")
+    if sigDir != 0
+        float qty = math.max(1, math.floor(math.min(strategy.equity * riskPct / 100 / (stopPips * pip), strategy.equity * maxLev / sigEntry)))
+        if sigDir == 1
+            strategy.entry("L", strategy.long, qty = qty, comment = "BUY fix")
+            strategy.exit("XL", from_entry = "L", stop = sigSL, limit = sigTP)
+        else
+            strategy.entry("S", strategy.short, qty = qty, comment = "SELL fix")
+            strategy.exit("XS", from_entry = "S", stop = sigSL, limit = sigTP)
+
+// -----------------------------------------------------------------------------
+//  PLOTS
+// -----------------------------------------------------------------------------
+bool inPre   = dayOK and tfOK and openMin >= refMin and openMin < fixMin
+bool inTrade = dayOK and tfOK and openMin >= fixMin and openMin < endMin
+bgcolor(showWin and inPre ? color.new(color.orange, 88) : na, title = "Pre-fix window")
+bgcolor(showWin and inTrade ? color.new(color.blue, 92) : na, title = "Trade window")
+plot(dayOK and tfOK and openMin >= refMin and openMin < endMin and refDate == dateKey ? refPx : na, "15:30 reference price", color = color.new(color.orange, 0), style = plot.style_linebr, linewidth = 1)
+

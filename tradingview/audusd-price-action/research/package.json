@@ -1,0 +1,9 @@
+{
+  "name": "audusd-pine-research",
+  "private": true,
+  "description": "Backtests and verification for the AUDUSD TradingView scripts (Oanda 1-minute data, 2005-2020).",
+  "type": "module",
+  "dependencies": {
+    "pinets": "0.10.0"
+  }
+}

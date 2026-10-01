@@ -1,93 +1,113 @@
-# AUDUSD Liquidity Sweep - pure price action (TradingView, Pine v6) - v2
+# AUDUSD TradingView scripts (Pine v6) - tested on 15 years of real minute data
 
-Two scripts that share one signal engine:
+**Short version**
 
-| File | Use it for |
+- **AUDUSD Month-End Fix Fade** (scalp, new): the only setup, out of about 300 tested variants, that made money after costs in three separate periods of real AUDUSD data, including a 2017-2020 period that was kept untouched until a single final test. The edge is real but small: about **+3 pips per trade, about 10 trades a year**.
+- **AUDUSD Liquidity Sweep** (v2, earlier): on the same real data it has **no edge**. The default scalp settings lost about 0.1R per trade after costs in every period. Do not trade its signals.
+
+| File | What it is |
 |---|---|
-| `AUDUSD_Liquidity_Sweep.pine` | **Indicator.** Buy/sell signals, stop/target boxes, pending-setup line, alerts, a dashboard that simulates every signal on your chart, and an **edge-diagnostics table**. |
-| `AUDUSD_Liquidity_Sweep_Strategy.pine` | **Strategy.** Same signals plus orders, so TradingView's Strategy Tester (and Deep Backtesting) can report results on your own data. |
+| `AUDUSD_MonthEnd_Fix_Fade.pine` | Indicator: month-end setup, entry/stop/target, alerts (text or JSON), dashboard. |
+| `AUDUSD_MonthEnd_Fix_Fade_Strategy.pine` | Same rules with orders, for the Strategy Tester (1 pip round-trip cost built in as commission). |
+| `AUDUSD_Liquidity_Sweep.pine`, `..._Strategy.pine` | The earlier sweep scripts (v2), kept for reference. See section 2. |
+| `research/` | The data pipeline, backtests and tests behind every number here. See `research/README.md`. |
 
-Install: TradingView > Pine Editor > paste the file > *Add to chart*. Use `FX:AUDUSD` or `OANDA:AUDUSD`.
-Scalp: M5-M15, mode **Scalp** (default). Swing: M30-H4, mode **Swing**.
+Install: TradingView > Pine Editor > paste a file > *Add to chart*.
 
-## No indicators
+---
 
-There is no moving average, oscillator, band or volatility indicator anywhere. Every rule is read from candles: swing points, highs, lows, closes, wicks.
+## 1. AUDUSD Month-End Fix Fade
 
-## The setup
+### Why it works
 
-Stop orders cluster just beyond obvious levels. When a candle pokes through such a level and **closes back inside**, the break was a liquidity grab and not acceptance. The script trades the reversal, only with the higher-timeframe structure, and only after a candle confirms it.
+On the last trading day of every month, pension funds, asset managers and hedgers rebalance and re-hedge their currency exposure, and much of that volume is executed at the WM/Reuters London 4pm fix. It pushes price in the half hour before 16:00 London. Once the fix is done the pressure stops and price tends to give part of the move back. This month-end fix pattern is documented in academic work (for example Melvin & Prins, 2015, and Evans, 2018, cited from memory). Australian super funds re-hedging their large foreign holdings are a plausible reason it is strongest in AUD. That is a hypothesis; the data only shows that AUDUSD is the pair where it held up.
 
-1. **Bias** - higher-timeframe market structure (Auto: M5 -> H1, M15 -> H4, H1 -> D). Bullish after a close above the last swing high, bearish after a close below the last swing low. Non-repainting (`[1]` + lookahead).
-2. **Sweep** - a candle wicks at least 1 pip beyond a level and closes back inside, with the close in the far 40% of its own range. Levels: swing highs/lows, previous-day high/low, Asian-session high/low, round numbers (x.xx00 / x.xx50). `Minimum confluence = 2` requires two different level types to be swept by one candle.
-3. **Confirmation** - within 3 candles, a close beyond the sweep candle's opposite extreme. A dotted line shows the level while a setup is pending. (`Immediate` mode skips this.)
-4. **Stop** beyond the sweep extreme + 1 pip. Stops outside 6-25 pips (Scalp) or 15-80 pips (Swing) are skipped so costs stay a small share of R.
-5. **Target** 1.5R (Scalp) / 2R (Swing), stop moved to break-even at 1R.
-6. **Filters** - entry window 07:00-15:30 London (Scalp), open trades flattened after 17:00 London, max 3 trades per day, **stop for the day after 2 losing trades**, 6-bar cooldown, one trade at a time.
+### Rules (London time; the script handles daylight saving)
 
-Signals are evaluated on closed candles only. Nothing repaints.
+1. **Day:** the last trading day (Monday-Friday) of the month.
+2. **Measure:** the move from 15:30 to 16:00. Skip the month if it is smaller than 3 pips.
+3. **Entry:** at 16:00, trade **against** that move (pushed up into the fix = SELL).
+4. **Stop:** 20 pips from the 16:00 price.
+5. **Target:** the 15:30 price (the move fully given back).
+6. **Exit:** if neither is hit, close at 17:00.
 
-## What changed in v2
+### Results (Oanda AUDUSD 1-minute data, 1 pip round-trip cost)
 
-- **Daily circuit breaker** - after 2 losing trades (a loss = -0.5R or worse) no new trades that day. Break-even exits do not count. `0` turns it off.
-- **Edge-diagnostics table** - average R with a 95% interval, a plain verdict (*too few trades / no edge proven / edge likely / negative*), the two halves of the sample, how much of the profit the best 3 trades make up, and results by liquidity type, buys and sells.
-- **Swing target 2.5R -> 2R, break-even 1.5R -> 1R** (see the real-data test below: the 2.5R-3R targets were reached less often than a coin flip would give).
-- Pending-setup trigger line, JSON alert format for webhook bridges, fixed-decimal price formatting, strategy default risk **1% -> 0.5%**.
+Entries at the first price after 16:00 and time exits at the first price after 17:00, which is what you get when you act on the alert. The rules were chosen on 2005-2012, confirmed on 2013-2016, and run **once** on 2017-May 2020 without any change afterwards.
 
-## Does it have an edge? What I could and could not test
+| Period | Trades | Win rate | Avg net pips | t-stat | Profit factor | Net pips | Max drawdown |
+|---|---|---|---|---|---|---|---|
+| 2005-2012 (rules found here) | 87 | 68% | +2.0 | 1.4 | 1.46 | +172 | 62 pips |
+| 2013-2016 (confirmation) | 36 | 72% | +5.4 | 3.1 | 3.30 | +194 | 26 pips |
+| 2017-May 2020 (unseen, tested once) | 35 | 71% | +2.9 | 1.8 | 2.25 | +103 | 32 pips |
+| **All 2005-May 2020** | **158** | **70%** | **+3.0** | **3.1** | **1.86** | **+468** | **62 pips** |
 
-**Real AUDUSD data: none.** This session's network blocked every market-data host I tried (Yahoo, Dukascopy, Stooq, HistData, FRED, ECB, Hugging Face and others) and I did not work around that. The only real FX candles I could legitimately obtain were two sample files shipped inside PyPI packages (`gym-anytrading`, `backtesting`): **EURUSD hourly, 2017 - Feb 2018** (6,225 and 5,000 bars; the two overlap, so they are not independent). That is a different pair, one year, and one strong uptrend. I ran the real script on it in a third-party Pine runtime (PineTS):
+- 13 of 16 years were positive (2006 -4, 2012 -13 and 2018 -24 pips were the losers). The longest losing streak was 3 trades. The worst trade was -25.6 pips (a gap through the stop in September 2008).
+- **Costs:** still profitable at 2 pips round trip (+2.0 pips per trade, PF 1.5); close to break-even at 3 pips.
+- **Speed:** most of the reversal happens in the first minutes after the fix. Entering a full minute late cut the average by about 0.8 pips.
+- **Robustness:** the post-fix reversal was positive in both 2005-2012 and 2013-2016 for every pre-fix window (from 15:00, 15:30 or 15:45), every exit time from 16:05 to 18:00 and every minimum move from 0 to 12 pips. Simulating on 5-minute or 15-minute bars gives the same result as 1-minute data. Removing the 10 best trades still leaves +1.4 pips per trade (PF 1.4).
+- **Other pairs:** the identical rule on EURUSD, GBPUSD and USDCAD worked in 2013-2016 but **not** in 2017-2020 (and GBPUSD lost clearly in 2005-2012). Use it on AUDUSD only.
+- **Only the month-end works:** the same fade on ordinary days, Fridays, the day before month-end, the first day of the month and the Tokyo fix showed nothing usable.
 
-| Swing preset, EURUSD H1, after 1 pip cost | trades | avg R | profit factor | max drawdown | worst day |
-|---|---|---|---|---|---|
-| v1 (2.5R target, no breaker) | 131 / 109 | -0.02 / -0.03 | 0.96 / 0.95 | 17.7R / 22.6R | -2.1R |
-| v2 (2R target, breaker) | 153 / 132 | -0.02 / -0.02 | 0.97 / 0.97 | 13.9R / 17.3R | -2.1R |
-| v2 without the breaker | 156 / 134 | -0.01 / -0.02 | 0.98 / 0.96 | 15.0R / 18.4R | -3.2R |
+### What to expect in money
 
-(first number: 2017 dataset, second: Apr 2017 - Feb 2018 dataset.)
+About +0.15R per trade and about 10 trades a year, so roughly **+1.5R a year**. At 1% risk per trade that is about +1.5% a year, with a worst drawdown of about 3% (62 pips = 3R) in the test. This is a small, steady edge, not a way to get rich. If you size up, the drawdowns scale up with it.
 
-What this says, honestly:
+### How to trade it
 
-- **No edge was detectable.** Average R is about -0.02 with a 95% interval of roughly -0.23 to +0.20, so the data cannot tell this system from a coin flip. The script's own verdict on both datasets is *"no edge proven (CI spans 0)"*.
-- An excursion study agrees: the chance of a signal reaching +1R / 1.5R / 2R before -1R was 45-50% / 37-43% / 30-34% across the variants I tried, essentially the random-walk values (50 / 40 / 33). At 2.5R-3R it was clearly *below* chance (22-25% vs 29%, 17-21% vs 25%): sweep reversals tend to stall, which is why the Swing target came down to 2R.
-- What v2 **did** improve is risk, not expectancy: the breaker caps the worst day near -2.1R (without it -3.2R) and on its own trimmed max drawdown by about 1R; together with the lower target, v2's max drawdown is 4-5R below v1's. Average R stayed at about -0.02.
-- Buys beat sells in this sample (+0.04/+0.10R vs -0.18/-0.40R). That is almost certainly 2017 being a strong EURUSD uptrend; I did not tune anything to it.
-- The Scalp preset is for M5-M15; on H1 candles it is outside its design range and should be ignored there. I had no intraday data to test it.
+1. Add the indicator to an **AUDUSD 1-15 minute** chart (OANDA:AUDUSD or FX:AUDUSD). Your chart's time zone does not matter.
+2. Create an alert on the indicator with condition *Any alert() function call*, *Once Per Bar Close*. You get a heads-up at 15:30 London on month-end days and the entry message (side, entry, stop, target) at 16:00. Switch *alert() message format* to JSON for a webhook bridge.
+3. Enter immediately, place the stop and target shown, and close by 17:00 London.
+4. Check results with the strategy file in the Strategy Tester. It fills at the next bar's open, like a real order sent on the alert. Month-ends are rare, so a normal chart history only holds a handful of trades. The 15-year table above is the real evidence.
 
-So: **treat AUDUSD performance as unknown.** Do not trade this live on the strength of this repo. The diagnostics table exists so that *your* data, not a promise, decides.
+### Limits
 
-## Verified by tests (code mechanics, synthetic candles)
+- About 10 trades a year, so even a real edge takes years to show up reliably in your own account.
+- The edge depends on how big funds execute at the fix. Changes in that practice can shrink or end it, as already happened for EUR, GBP and CAD in 2017-2020.
+- A month-end that coincides with major news can move far past the stop.
+- Spreads at 16:00 London are normally tight. Check your broker's spread at that time, because the result depends on costs staying near 1 pip.
 
-- 76 + 26 hand-built scenario checks, run as sells and as mirrored buys: every level type, confirmation, expiry, invalidation, stop, target, break-even, session-end exit, "stop first when stop and target share a candle", stop-size and rejection filters, entry-window edges, confluence, structure bias, max trades per day, cooldown, one trade at a time, the circuit breaker (including rollover and break-even not counting), the pending line, JSON alerts, and the diagnostics table cross-checked against independent calculations (interval, halves, concentration, per-type counts).
-- No repainting: re-running on truncated data reproduces the identical earlier signals, bias and exits.
-- The exit and statistics engine matches an independent re-simulation of every trade.
-- Strategy vs indicator: identical entries, exits and prices on 734 trades over 6 datasets, with the breaker at 0, 1 and 2, and no signal ever appears after the daily loss limit (break-even is switched off in this comparison because the emulator cannot modify exit orders, so the strategy's break-even step is untested here).
-- The signal-engine block is byte-identical in both files.
+---
 
-**Not verified:** compilation in TradingView itself (no compiler was available; both files parse with an independent Pine parser and run in PineTS, and were reviewed by hand for v6 pitfalls). If TradingView shows an error, paste it back.
+## 2. Liquidity Sweep indicator (v2): verdict on real data
 
-## How to judge it yourself (do this before real money)
+The same 15 years of Oanda AUDUSD minute data, 1 pip cost, stop-and-target order resolved with minute data. R = initial risk.
 
-1. Add the **strategy** to M15 AUDUSD. Keep the 0.5-pip slippage on each market/stop fill or enter your broker's real costs. Premium: run **Deep Backtesting** over years.
-2. Open the indicator's **diagnostics table** next to it. Believe the verdict, not the equity curve. Fewer than ~100 trades means "too few"; a result is only interesting when the interval's lower end is above 0 *and* both halves of the sample agree.
-3. Split history with *Limit trading to a date range*: settle on settings with one period, then check a period you have never looked at, once.
-4. Check different regimes and that a handful of trades do not make up the whole profit (the "best 3 trades" row).
-5. Forward test on a demo account for weeks. Then size small (default risk is 0.5% per trade; with a profit factor near 1, drawdown in % is roughly the drawdown in R times the risk).
+| Configuration | 2005-2012 | 2013-2016 | 2017-May 2020 |
+|---|---|---|---|
+| v2 default: Scalp, M15 | -0.11R per trade (PF 0.80, 1,697 trades) | -0.06R (PF 0.88) | -0.08R (PF 0.85) |
+| Scalp, M5 | -0.12R (PF 0.78) | -0.13R (PF 0.77) | not run |
+| Swing, H1 | -0.04R (PF 0.92) | +0.00R (PF 1.00) | not run |
+| Swing, H4 | +0.02R (PF 1.04) | -0.01R (PF 0.99) | not run |
+| Best in-sample variant: Swing H4, no round numbers | +0.03R (PF 1.06) | +0.06R (PF 1.12) | **-0.18R (PF 0.68)** |
 
-## Win rate vs payoff
+What the data says:
 
-With a fixed R target, a higher win rate means a smaller target, not a better system: the coin-flip win rate is 1/(1+R) (50% at 1R, 40% at 1.5R, 33% at 2R). The dashboard prints it next to your win rate. A system is only good if it beats that number after costs.
+- **Before costs the sweep reversal has roughly zero edge** (about -0.04R on M15, -0.01R on H1, +0.01R on H4). Costs then turn it negative, most of all on small timeframes where 1 pip is 6-8% of each R.
+- Trend alignment, level type, confluence, entry mode, session hour, stop buffer and targets did not change that in any repeatable way. The best-looking variant failed on the unseen 2017-2020 data.
+- Round-number sweeps (most of the signals) were not followed by reversals at all.
+- **Correction to the previous README:** the earlier EURUSD figures were produced in PineTS, which (as found here) evaluates `request.security(..., f(x)[1], lookahead_on)` without the `[1]`. That gives the bias filter up to one higher-timeframe bar of look-ahead, so those figures were slightly too optimistic. **On TradingView itself the script is correct and does not repaint.**
 
-## Limits
+---
 
-- No news filter (the script cannot see the calendar). Avoid RBA, Fed, NFP and CPI releases yourself.
-- The stop is assumed hit first when a candle touches both stop and target; real fills, spread widening and gaps will differ.
-- The dashboard covers only the candles loaded on your chart (a few weeks on M15 for lower plans) and uses a candle-based simulation.
-- Strategy position sizing assumes a USD account on a USD-quoted pair.
-- Defaults use London time for the entry window; change the session time zone if you trade another session.
+## 3. How the research was done
 
-## Alerts
+- **Data:** Oanda AUD_USD 1-minute mid-price candles, Jan 2005 to May 2020 (5.39 million bars), from the public [FutureSharks/financial-data](https://github.com/FutureSharks/financial-data) repository. Weekend quotes were removed. The FX day starts at 17:00 New York, as on TradingView.
+- **Periods:** 2005-2012 for exploration, 2013-2016 to confirm, 2017-May 2020 kept closed and run once at the end on the locked rules.
+- **Costs and accuracy:** 1 pip round trip on every trade. When a candle hits both the stop and the target, minute data decides which came first. The mid-price drop at the 17:00 New York rollover (the interest-rate carry that a real swap offsets) was identified and excluded as a source of fake profit.
+- **Code checked against the real scripts:** the fast backtester reproduces the Pine scripts trade for trade when the real Pine code runs in PineTS on the same bars. That covers 1,626 sweep trades and all 158 month-end trades. The strategy file matches on 157 of 158; on the other, one 15-minute bar touched both levels and the minute data agrees with the strategy's result.
+- **Everything that was tried** (about 300 variants, disclosed because testing many ideas produces false positives):
+  - sweep presets, diagnostics, 14 candidate fixes and a 26-variant neighbourhood grid;
+  - drift after sweeps and breakouts of the previous-day high/low, the Asian range and round numbers, by session (24 events, 5 horizons);
+  - previous-day failure trades;
+  - time-series momentum (6 lookbacks, 3 holding periods);
+  - session-to-session predictability and the hour-of-day profile;
+  - 13 daily candle patterns;
+  - price spikes, previous-week levels and weekend gaps;
+  - the 4pm fix on several kinds of day, and the Tokyo fix on gotobi days (Japanese settlement days).
 
-`BUY signal`, `SELL signal`, `any signal`, simulated target and stop alerts are available as alert conditions. For messages with entry, stop and target, create the alert on the indicator with condition *Any alert() function call* and *Once Per Bar Close*; set *alert() message format* to `JSON` for webhook bridges (`{"symbol":"AUDUSD","action":"buy","entry":...,"sl":...,"tp":...}`).
+  Only the month-end fix fade held up in both earlier periods and then again on the unseen data.
 
-Not financial advice. Trading leveraged FX can lose more than you deposit.
+To reproduce any number, see `research/README.md`.
+
+Not financial advice. Leveraged FX can lose more than you deposit; forward test on a demo account first.
