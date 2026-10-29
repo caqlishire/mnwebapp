@@ -1,0 +1,4 @@
+Contact: mailto:info@mngrouphome.org
+Expires: 2027-10-28T23:59:59Z
+Canonical: https://www.mngrouphome.org/.well-known/security.txt
+Preferred-Languages: en

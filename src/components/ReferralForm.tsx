@@ -46,6 +46,8 @@ type SubmissionState = {
   message: string;
 };
 
+const maxSupportPlanSize = 4 * 1024 * 1024;
+
 export function ReferralForm() {
   const [form, setForm] = useState<ReferralFormState>(initialForm);
   const [supportPlanFile, setSupportPlanFile] = useState<File | null>(null);
@@ -401,7 +403,7 @@ export function ReferralForm() {
               </span>
               <span className="text-sm font-normal leading-6 text-slate-600">
                 Accepted file types: PDF, Word documents, images, or text files.
-                Maximum size: 10 MB.
+                Maximum size: 4 MB.
               </span>
               <span className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-400 bg-white px-4 py-5 text-center text-slate-700 transition hover:border-rose-700 hover:bg-rose-50">
                 <FileUp
@@ -425,9 +427,23 @@ export function ReferralForm() {
                 type="file"
                 name="supportPlan"
                 accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,text/plain"
-                onChange={(event) =>
-                  setSupportPlanFile(event.target.files?.[0] ?? null)
-                }
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+
+                  if (file && file.size > maxSupportPlanSize) {
+                    event.target.value = "";
+                    setSupportPlanFile(null);
+                    setSubmission({
+                      type: "error",
+                      message:
+                        "Support Plan / CSSP upload must be 4 MB or smaller.",
+                    });
+                    return;
+                  }
+
+                  setSupportPlanFile(file);
+                  setSubmission({ type: "idle", message: "" });
+                }}
                 className="sr-only"
               />
             </label>

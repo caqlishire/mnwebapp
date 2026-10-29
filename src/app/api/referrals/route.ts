@@ -35,6 +35,9 @@ type ParsedReferralRequest = {
   };
 };
 
+const maxRequestSize = 4.25 * 1024 * 1024;
+const maxSupportPlanSize = 4 * 1024 * 1024;
+
 const recipientEmail =
   process.env.REFERRAL_TO_EMAIL ?? brand.email;
 
@@ -67,6 +70,11 @@ function getTransporter() {
 }
 
 export async function POST(request: Request) {
+  const requestError = validateRequest(request);
+  if (requestError) {
+    return requestError;
+  }
+
   let parsedRequest: ParsedReferralRequest;
 
   try {
@@ -101,7 +109,7 @@ export async function POST(request: Request) {
       to: recipientEmail,
       from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
       replyTo: payload.submitterEmail,
-      subject: `New CRS referral inquiry: ${cleanText(payload.applicantFullName)}`,
+      subject: `New CRS referral inquiry: ${cleanHeaderText(payload.applicantFullName)}`,
       text: buildTextEmail(payload),
       html: buildHtmlEmail(payload),
       attachments: supportPlan
@@ -129,6 +137,66 @@ export async function POST(request: Request) {
       { status: 503 },
     );
   }
+}
+
+function validateRequest(request: Request) {
+  const origin = request.headers.get("origin");
+  if (origin && !isAllowedOrigin(origin)) {
+    return NextResponse.json(
+      { message: "This referral request came from an untrusted origin." },
+      { status: 403 },
+    );
+  }
+
+  const contentType = request.headers.get("content-type") ?? "";
+  if (
+    !contentType.includes("multipart/form-data") &&
+    !contentType.includes("application/json")
+  ) {
+    return NextResponse.json(
+      { message: "Unsupported referral request format." },
+      { status: 415 },
+    );
+  }
+
+  const contentLength = Number(request.headers.get("content-length") ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > maxRequestSize) {
+    return NextResponse.json(
+      {
+        message:
+          "The referral submission is too large. Uploads must be 4 MB or smaller.",
+      },
+      { status: 413 },
+    );
+  }
+
+  return null;
+}
+
+function isAllowedOrigin(origin: string) {
+  const allowedOrigins = new Set([
+    "https://mngrouphome.org",
+    "https://www.mngrouphome.org",
+  ]);
+
+  for (const variable of [
+    process.env.VERCEL_URL,
+    process.env.VERCEL_BRANCH_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL,
+  ]) {
+    if (variable) {
+      allowedOrigins.add(`https://${variable}`);
+    }
+  }
+
+  if (
+    process.env.NODE_ENV !== "production" &&
+    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+  ) {
+    return true;
+  }
+
+  return allowedOrigins.has(origin);
 }
 
 async function parseReferralRequest(
@@ -291,6 +359,10 @@ function cleanText(value: unknown) {
   return value.trim().slice(0, 4000);
 }
 
+function cleanHeaderText(value: unknown) {
+  return cleanText(value).replaceAll(/[\r\n]+/g, " ");
+}
+
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value : "";
@@ -313,31 +385,72 @@ function getStringArray(formData: FormData, key: string) {
 }
 
 async function parseSupportPlanFile(file: File) {
-  const maxFileSize = 10 * 1024 * 1024;
-  const allowedTypes = new Set([
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "image/png",
-    "image/jpeg",
-    "text/plain",
-  ]);
-
-  if (file.size > maxFileSize) {
-    throw new Error("Support Plan / CSSP upload must be 10 MB or smaller.");
+  if (file.size > maxSupportPlanSize) {
+    throw new Error("Support Plan / CSSP upload must be 4 MB or smaller.");
   }
 
-  if (file.type && !allowedTypes.has(file.type)) {
+  const filename = sanitizeFilename(file.name || "support-plan");
+  const extension = filename.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
+  const content = Buffer.from(await file.arrayBuffer());
+
+  if (!isAllowedSupportPlan(extension, file.type, content)) {
     throw new Error(
-      "Support Plan / CSSP upload must be a PDF, Word document, image, or text file.",
+      "Support Plan / CSSP upload does not match an accepted PDF, Word, image, or text file type.",
     );
   }
 
   return {
-    filename: sanitizeFilename(file.name || "support-plan"),
-    content: Buffer.from(await file.arrayBuffer()),
+    filename,
+    content,
     contentType: file.type || undefined,
   };
+}
+
+function isAllowedSupportPlan(
+  extension: string,
+  contentType: string,
+  content: Buffer,
+) {
+  const hasPrefix = (...bytes: number[]) =>
+    bytes.every((byte, index) => content[index] === byte);
+
+  switch (extension) {
+    case ".pdf":
+      return (
+        (!contentType || contentType === "application/pdf") &&
+        content.subarray(0, 5).toString("ascii") === "%PDF-"
+      );
+    case ".doc":
+      return (
+        (!contentType || contentType === "application/msword") &&
+        hasPrefix(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1)
+      );
+    case ".docx":
+      return (
+        (!contentType ||
+          contentType ===
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document") &&
+        hasPrefix(0x50, 0x4b, 0x03, 0x04)
+      );
+    case ".png":
+      return (
+        (!contentType || contentType === "image/png") &&
+        hasPrefix(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+      );
+    case ".jpg":
+    case ".jpeg":
+      return (
+        (!contentType || contentType === "image/jpeg") &&
+        hasPrefix(0xff, 0xd8, 0xff)
+      );
+    case ".txt":
+      return (
+        (!contentType || contentType === "text/plain") &&
+        !content.includes(0)
+      );
+    default:
+      return false;
+  }
 }
 
 function sanitizeFilename(filename: string) {
